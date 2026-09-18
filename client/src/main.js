@@ -7,6 +7,7 @@ const app = document.querySelector('#app');
 app.innerHTML = [
   '<div id="game">',
     '<div id="world"></div>',
+    '<div id="house-loading" class="house-loading"><div class="house-loading-card"><div class="house-loader"></div><strong id="house-loading-title">Entering home…</strong><span>Preparing your space</span></div></div>',
     '<div id="join" class="overlay">',
       '<form id="join-form" class="join-card glass">',
         '<div class="mark">H</div>',
@@ -110,6 +111,10 @@ let lastNetworkSend = 0;
 let voiceEnabled = false;
 let localStream = null;
 let joystick = { x: 0, y: 0 };
+let insideHouse = null;
+let transitioningHouse = false;
+let seatedBench = null;
+let savedCameraDistance = null;
 
 const remotePlayers = new Map();
 const peers = new Map();
@@ -119,6 +124,7 @@ let voiceAudioContext = null;
 let voiceInputSource = null;
 let voiceProcessor = null;
 let voiceSilentGain = null;
+let voiceOutputGain = null;
 let voiceRelayActive = false;
 const voicePlaybackCursors = new Map();
 const VOICE_SAMPLE_RATE = 16000;
@@ -334,7 +340,12 @@ function makeHouse(index, x, z) {
 
 homePositions.forEach((p, i) => makeHouse(i, p[0], p[1]));
 
+function isRoadDecorSafe(x, z, clearance = 12.5) {
+  return Math.abs(x) > clearance && Math.abs(z) > clearance;
+}
+
 function makeTree(x, z, scale = 1) {
+  if (!isRoadDecorSafe(x, z, 12.5)) return null;
   const g = new THREE.Group();
   const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.35 * scale, 0.5 * scale, 3.2 * scale, 9), material(0x765135));
   trunk.position.y = 1.6 * scale;
@@ -359,6 +370,7 @@ const centralTreePositions = [
 centralTreePositions.forEach((p, i) => makeTree(p[0], p[1], 0.9 + (i % 3) * 0.08));
 
 function makeShrub(x, z, scale = 1, color = 0x4e8a50) {
+  if (!isRoadDecorSafe(x, z, 11.8)) return null;
   const shrub = new THREE.Mesh(new THREE.DodecahedronGeometry(0.85 * scale, 0), material(color, 1));
   shrub.scale.y = 0.72;
   shrub.position.set(x, 0.58 * scale, z);
@@ -386,6 +398,8 @@ function makeLamp(x, z) {
   world.add(g);
 }
 
+const benchSpots = [];
+
 function makeBench(x, z, rot = 0) {
   const g = new THREE.Group();
   cube(3.0, 0.2, 0.75, 0x8a6147, 0, 1.0, 0, g);
@@ -395,6 +409,15 @@ function makeBench(x, z, rot = 0) {
   g.position.set(x, 0, z);
   g.rotation.y = rot;
   world.add(g);
+
+  benchSpots.push({
+    id: 'bench-' + benchSpots.length,
+    x,
+    z,
+    rot,
+    standX: x + Math.sin(rot) * 1.8,
+    standZ: z + Math.cos(rot) * 1.8
+  });
 }
 
 [
@@ -413,6 +436,61 @@ makeBench(26, 41, Math.PI);
 makeBench(-14, 17, Math.PI / 2);
 
 // Block-style skyline objects removed because they could overlap the streamed road grid.
+
+const interiorGroup = new THREE.Group();
+interiorGroup.visible = false;
+scene.add(interiorGroup);
+
+function buildHouseInterior() {
+  const floorMat = 0xb98f68;
+  const wallMat = 0xf0e9dd;
+  const trimMat = 0xe7dfd3;
+
+  cube(18, .18, 16, floorMat, 0, .02, 0, interiorGroup);
+  cube(18, 6.5, .35, wallMat, 0, 3.25, -8, interiorGroup);
+  cube(.35, 6.5, 16, wallMat, -9, 3.25, 0, interiorGroup);
+  cube(.35, 6.5, 16, wallMat, 9, 3.25, 0, interiorGroup);
+  cube(6.4, 6.5, .35, wallMat, -5.8, 3.25, 8, interiorGroup);
+  cube(6.4, 6.5, .35, wallMat, 5.8, 3.25, 8, interiorGroup);
+  cube(18, .2, 16, 0xf8f4ec, 0, 6.5, 0, interiorGroup);
+
+  // Entry trim around the open doorway.
+  cube(.28, 4.5, .35, trimMat, -2.55, 2.25, 7.78, interiorGroup);
+  cube(.28, 4.5, .35, trimMat, 2.55, 2.25, 7.78, interiorGroup);
+  cube(5.4, .28, .35, trimMat, 0, 4.45, 7.78, interiorGroup);
+
+  // Living room.
+  cube(5.2, 1.0, 1.8, 0x7e91ad, -3.1, .72, -3.5, interiorGroup);
+  cube(5.2, 1.9, .5, 0x687b98, -3.1, 1.45, -4.15, interiorGroup);
+  cube(2.7, .38, 1.6, 0x8c674a, -3.0, .55, -1.0, interiorGroup);
+  cube(4.5, .06, 3.6, 0xc7b9d9, -3.0, .14, -2.1, interiorGroup);
+
+  // Dining nook.
+  cube(3.1, .22, 2.2, 0x8c674a, 4.6, 1.15, -2.2, interiorGroup);
+  [[3.2,-2.2],[6.0,-2.2],[4.6,-3.6],[4.6,-.8]].forEach(([x,z]) => {
+    cube(.9, .18, .9, 0x806048, x, .86, z, interiorGroup);
+    cube(.15, .85, .15, 0x4b4d55, x, .42, z, interiorGroup);
+  });
+
+  // Bed and side table.
+  cube(5.2, .55, 3.4, 0xf2f0e9, 4.5, .7, 3.8, interiorGroup);
+  cube(5.0, .55, 1.2, 0x88a7c6, 4.5, 1.15, 4.8, interiorGroup);
+  cube(1.2, .8, 1.2, 0x8c674a, 7.3, .48, 4.3, interiorGroup);
+
+  // Compact kitchen counter.
+  cube(5.8, 1.7, 1.0, 0xb7b1a8, -5.5, .9, 5.6, interiorGroup);
+  cube(5.8, .16, 1.15, 0xe7e2db, -5.5, 1.82, 5.6, interiorGroup);
+  cube(1.2, 2.7, 1.2, 0xd9dde2, -7.4, 1.35, 4.1, interiorGroup);
+
+  const warmLight = new THREE.PointLight(0xffd9a3, 32, 24, 1.8);
+  warmLight.position.set(0, 5.5, 0);
+  interiorGroup.add(warmLight);
+
+  const lamp = new THREE.PointLight(0xffc879, 16, 10, 2);
+  lamp.position.set(-4, 3.0, -2.5);
+  interiorGroup.add(lamp);
+}
+buildHouseInterior();
 
 const clouds = [];
 function makeCloud(x, y, z, scale = 1) {
@@ -962,6 +1040,7 @@ function createAvatar(data, local = false) {
     visual, torso, head, armL, armR, legL, legR, groundRing: ring,
     moving: false,
     sprinting: false,
+    seated: false,
     grounded: (data.y || 0) <= 0.001,
     verticalVelocity: 0,
     target: new THREE.Vector3(data.x || 0, data.y || 0, data.z || 0),
@@ -978,6 +1057,128 @@ function createAvatar(data, local = false) {
   return root;
 }
 
+const npcActors = [];
+const npcCars = [];
+
+function makeNpcWalker(index, route, runner = false) {
+  const outfits = ['sky', 'berry', 'mint', 'street', 'sunrise'];
+  const names = ['Mika', 'Ari', 'Ken', 'Lia', 'Noah', 'Sora', 'Aya', 'Jin'];
+  const start = route[index % route.length];
+  const mesh = createAvatar({
+    id: 'npc-' + index,
+    name: names[index % names.length],
+    gender: index % 2 ? 'male' : 'female',
+    outfit: outfits[index % outfits.length],
+    x: start[0],
+    y: 0,
+    z: start[1],
+    rot: 0
+  }, false);
+
+  mesh.userData.groundRing.visible = false;
+  npcActors.push({
+    mesh,
+    route,
+    segment: index % route.length,
+    progress: (index * .19) % 1,
+    speed: runner ? 4.0 + (index % 2) * .35 : 1.75 + (index % 3) * .16,
+    runner
+  });
+}
+
+function makeNpcCar(index, axis, lane, direction) {
+  const g = new THREE.Group();
+  const colors = [0xd85f5f, 0x5c80c7, 0xe0a84f, 0x5fa078, 0x8c6cc0, 0xd7d9dc];
+  cube(3.6, .75, 6.2, colors[index % colors.length], 0, .78, 0, g);
+  cube(3.0, .85, 3.0, 0xc8e2ee, 0, 1.48, -.35, g);
+  cube(2.7, .08, 1.5, 0x4d5d6b, 0, 1.78, -.4, g);
+
+  [[-1.45,-1.9],[1.45,-1.9],[-1.45,1.9],[1.45,1.9]].forEach(([x,z]) => {
+    const wheel = new THREE.Mesh(new THREE.CylinderGeometry(.46, .46, .32, 12), material(0x252a31,.9));
+    wheel.rotation.z = Math.PI / 2;
+    wheel.position.set(x,.48,z);
+    g.add(wheel);
+  });
+
+  const driverHead = new THREE.Mesh(new THREE.SphereGeometry(.32, 14, 10), material(0xefbd9b,.7));
+  driverHead.position.set(-.6, 2.04, .25);
+  g.add(driverHead);
+  const driverTorso = new THREE.Mesh(new THREE.BoxGeometry(.65,.7,.5), material(index % 2 ? 0x4b6a8d : 0x885b7e,.7));
+  driverTorso.position.set(-.6,1.58,.22);
+  g.add(driverTorso);
+
+  if (axis === 'x') {
+    g.position.set(direction > 0 ? -82 : 82, 0, lane);
+    g.rotation.y = direction > 0 ? Math.PI / 2 : -Math.PI / 2;
+  } else {
+    g.position.set(lane, 0, direction > 0 ? -82 : 82);
+    g.rotation.y = direction > 0 ? 0 : Math.PI;
+  }
+
+  scene.add(g);
+  npcCars.push({ mesh: g, axis, lane, direction, speed: 8 + (index % 3) * 1.4 });
+}
+
+function initNpcLife() {
+  const routes = [
+    [[-14,-14],[-14,-60],[-60,-60],[-60,-14]],
+    [[14,14],[14,60],[60,60],[60,14]],
+    [[-60,14],[-14,14],[-14,60],[-60,60]],
+    [[14,-60],[60,-60],[60,-14],[14,-14]],
+    [[18,29],[21,38],[30,41],[39,38],[42,29],[39,20],[30,17],[21,20]]
+  ];
+
+  for (let i = 0; i < 8; i += 1) makeNpcWalker(i, routes[i % routes.length], i === 2 || i === 6);
+
+  makeNpcCar(0, 'x', -3.8, 1);
+  makeNpcCar(1, 'x', 3.8, -1);
+  makeNpcCar(2, 'z', -3.8, 1);
+  makeNpcCar(3, 'z', 3.8, -1);
+  makeNpcCar(4, 'x', -5.4, -1);
+  makeNpcCar(5, 'z', 5.4, 1);
+}
+initNpcLife();
+
+function updateNpcLife(delta, time) {
+  if (insideHouse) return;
+
+  npcActors.forEach((npc) => {
+    const route = npc.route;
+    const a = route[npc.segment % route.length];
+    const b = route[(npc.segment + 1) % route.length];
+    const dx = b[0] - a[0];
+    const dz = b[1] - a[1];
+    const length = Math.max(.001, Math.hypot(dx, dz));
+
+    npc.progress += (npc.speed * delta) / length;
+    if (npc.progress >= 1) {
+      npc.progress -= 1;
+      npc.segment = (npc.segment + 1) % route.length;
+    }
+
+    const from = route[npc.segment % route.length];
+    const to = route[(npc.segment + 1) % route.length];
+    npc.mesh.position.x = THREE.MathUtils.lerp(from[0], to[0], npc.progress);
+    npc.mesh.position.z = THREE.MathUtils.lerp(from[1], to[1], npc.progress);
+    npc.mesh.rotation.y = Math.atan2(to[0] - from[0], to[1] - from[1]);
+    npc.mesh.userData.moving = true;
+    npc.mesh.userData.sprinting = npc.runner;
+    updateAvatarAnimation(npc.mesh, time + npc.segment * .7, delta);
+  });
+
+  npcCars.forEach((car) => {
+    if (car.axis === 'x') {
+      car.mesh.position.x += car.direction * car.speed * delta;
+      if (car.mesh.position.x > 88) car.mesh.position.x = -88;
+      if (car.mesh.position.x < -88) car.mesh.position.x = 88;
+    } else {
+      car.mesh.position.z += car.direction * car.speed * delta;
+      if (car.mesh.position.z > 88) car.mesh.position.z = -88;
+      if (car.mesh.position.z < -88) car.mesh.position.z = 88;
+    }
+  });
+}
+
 let cameraYaw = Math.PI;
 let cameraPitch = 0.34;
 let cameraDistance = 9.5;
@@ -990,6 +1191,12 @@ function lerpAngle(a, b, t) {
 
 function updateLocal(delta) {
   if (!me) return;
+
+  if (transitioningHouse || me.userData.seated) {
+    me.userData.moving = false;
+    me.userData.sprinting = false;
+    return;
+  }
 
   let forward = 0;
   let strafe = 0;
@@ -1043,6 +1250,19 @@ function updateLocal(delta) {
 }
 
 function updateAvatarAnimation(group, time, delta) {
+  if (group.userData.seated) {
+    group.userData.moving = false;
+    group.userData.sprinting = false;
+    group.userData.legL.rotation.x = THREE.MathUtils.lerp(group.userData.legL.rotation.x, -1.42, Math.min(1, delta * 10));
+    group.userData.legR.rotation.x = THREE.MathUtils.lerp(group.userData.legR.rotation.x, -1.42, Math.min(1, delta * 10));
+    group.userData.armL.rotation.x = THREE.MathUtils.lerp(group.userData.armL.rotation.x, -.25, Math.min(1, delta * 10));
+    group.userData.armR.rotation.x = THREE.MathUtils.lerp(group.userData.armR.rotation.x, -.25, Math.min(1, delta * 10));
+    group.userData.visual.position.y = THREE.MathUtils.lerp(group.userData.visual.position.y, -.9, Math.min(1, delta * 10));
+    group.userData.visual.rotation.z = THREE.MathUtils.lerp(group.userData.visual.rotation.z, 0, Math.min(1, delta * 10));
+    group.userData.torso.rotation.x = THREE.MathUtils.lerp(group.userData.torso.rotation.x, .08, Math.min(1, delta * 10));
+    return;
+  }
+
   const moving = group.userData.moving;
   const sprinting = Boolean(group.userData.sprinting);
   const speed = moving ? (sprinting ? 13.5 : 9.0) : 1.6;
@@ -1106,32 +1326,181 @@ function updateRemote(delta, time) {
 }
 
 function nearestHouse() {
-  if (!me) return null;
+  if (!me || insideHouse) return null;
   let best = null;
 
   homePositions.forEach((p, index) => {
     const d = Math.hypot(me.position.x - p[0], me.position.z - p[1]);
-    if (d < 8 && (!best || d < best.distance)) best = { homeId: index, distance: d, permanent: true };
+    if (d < 8 && (!best || d < best.distance)) {
+      best = { type: 'house', homeId: index, distance: d, permanent: true, x: p[0], z: p[1] };
+    }
   });
 
   proceduralHouses.forEach((house) => {
     const d = Math.hypot(me.position.x - house.x, me.position.z - house.z);
-    if (d < 7.5 && (!best || d < best.distance)) best = { homeId: house.id, distance: d, permanent: false, x: house.x, z: house.z };
+    if (d < 7.5 && (!best || d < best.distance)) {
+      best = { type: 'house', homeId: house.id, distance: d, permanent: false, x: house.x, z: house.z };
+    }
   });
 
   return best;
 }
 
-function visitHouse(homeId) {
-  if (!me) return;
+function nearestBench() {
+  if (!me || insideHouse) return null;
+  let best = null;
+  benchSpots.forEach((bench) => {
+    const d = Math.hypot(me.position.x - bench.x, me.position.z - bench.z);
+    if (d < 3.6 && (!best || d < best.distance)) best = { type: 'bench', bench, distance: d };
+  });
+  return best;
+}
+
+function nearestInteractable() {
+  if (!me) return null;
+
+  if (insideHouse) {
+    const d = Math.hypot(me.position.x - insideHouse.exitX, me.position.z - insideHouse.exitZ);
+    return d < 4.2 ? { type: 'exit', distance: d } : null;
+  }
+
+  if (me.userData.seated && seatedBench) {
+    return { type: 'bench-exit', bench: seatedBench, distance: 0 };
+  }
+
+  const house = nearestHouse();
+  const bench = nearestBench();
+  if (bench && (!house || bench.distance <= house.distance)) return bench;
+  return house;
+}
+
+function setExteriorVisibility(visible) {
+  world.visible = visible;
+  remotePlayers.forEach((remote) => { remote.mesh.visible = visible; });
+  npcActors.forEach((npc) => { npc.mesh.visible = visible; });
+  npcCars.forEach((car) => { car.mesh.visible = visible; });
+}
+
+function showHouseLoading(title, duration = 520) {
+  const loading = document.querySelector('#house-loading');
+  const label = document.querySelector('#house-loading-title');
+  if (label) label.textContent = title;
+  loading.classList.add('show');
+  return new Promise((resolve) => {
+    window.setTimeout(() => {
+      loading.classList.remove('show');
+      resolve();
+    }, duration);
+  });
+}
+
+function standFromBench() {
+  if (!me || !seatedBench) return;
+  me.userData.seated = false;
+  me.userData.visual.position.y = 0;
+  me.userData.groundRing.visible = true;
+  me.position.set(seatedBench.standX, 0, seatedBench.standZ);
+  me.rotation.y = seatedBench.rot;
+  seatedBench = null;
+  toast('You stood up.');
+}
+
+function sitOnBench(bench) {
+  if (!me || !bench || insideHouse) return;
+  seatedBench = bench;
+  me.userData.seated = true;
+  me.userData.grounded = true;
+  me.userData.verticalVelocity = 0;
+  me.userData.groundRing.visible = false;
+  me.position.set(bench.x, 0, bench.z);
+  me.rotation.y = bench.rot;
+  toast('Press E again to stand.');
+}
+
+function houseDescriptor(homeId) {
   if (typeof homeId === 'number' && homePositions[homeId]) {
     const p = homePositions[homeId];
-    me.position.set(p[0], 0, p[1] + 7.6);
-    toast('Visiting Home #' + (homeId + 1) + '.');
-    return;
+    return {
+      homeId,
+      x: p[0],
+      z: p[1],
+      label: 'Home #' + (homeId + 1),
+      entranceX: p[0],
+      entranceZ: p[1] + 7.6
+    };
   }
+
   const house = proceduralHouses.get(homeId);
-  if (house) toast('You found a new neighborhood home. Interior visits are planned for the next home milestone.');
+  if (!house) return null;
+  return {
+    homeId,
+    x: house.x,
+    z: house.z,
+    label: 'Neighborhood Home',
+    entranceX: house.x,
+    entranceZ: house.z + 7.4
+  };
+}
+
+async function visitHouse(homeId) {
+  if (!me || transitioningHouse) return;
+  const house = houseDescriptor(homeId);
+  if (!house) return;
+
+  if (me.userData.seated) standFromBench();
+  transitioningHouse = true;
+  keys.clear();
+  await showHouseLoading('Entering ' + house.label + '…', 560);
+
+  savedCameraDistance = cameraDistance;
+  cameraDistance = Math.min(cameraDistance, 5.8);
+  interiorGroup.position.set(house.x, 0, house.z);
+  interiorGroup.visible = true;
+  setExteriorVisibility(false);
+
+  insideHouse = {
+    homeId: house.homeId,
+    label: house.label,
+    entranceX: house.entranceX,
+    entranceZ: house.entranceZ,
+    exitX: house.x,
+    exitZ: house.z + 6.3
+  };
+
+  me.position.set(house.x, 0, house.z + 1.5);
+  me.rotation.y = 0;
+  me.userData.grounded = true;
+  me.userData.verticalVelocity = 0;
+  transitioningHouse = false;
+  toast('Inside ' + house.label + '. Walk to the front door and press E to leave.');
+}
+
+async function leaveHouse() {
+  if (!me || !insideHouse || transitioningHouse) return;
+  transitioningHouse = true;
+  keys.clear();
+  const destination = { x: insideHouse.entranceX, z: insideHouse.entranceZ };
+  await showHouseLoading('Stepping outside…', 380);
+
+  interiorGroup.visible = false;
+  setExteriorVisibility(true);
+  me.position.set(destination.x, 0, destination.z);
+  me.userData.grounded = true;
+  me.userData.verticalVelocity = 0;
+  insideHouse = null;
+  if (savedCameraDistance != null) cameraDistance = savedCameraDistance;
+  savedCameraDistance = null;
+  transitioningHouse = false;
+}
+
+function interactNearest() {
+  const target = nearestInteractable();
+  if (!target) return;
+
+  if (target.type === 'house') visitHouse(target.homeId);
+  else if (target.type === 'bench') sitOnBench(target.bench);
+  else if (target.type === 'bench-exit') standFromBench();
+  else if (target.type === 'exit') leaveHouse();
 }
 
 document.addEventListener('keydown', (event) => {
@@ -1139,16 +1508,15 @@ document.addEventListener('keydown', (event) => {
 
   if (event.code === 'Space') {
     event.preventDefault();
-    if (me && me.userData.grounded && !event.repeat) {
+    if (me && !me.userData.seated && !transitioningHouse && me.userData.grounded && !event.repeat) {
       me.userData.grounded = false;
       me.userData.verticalVelocity = 8.4;
     }
   }
 
   keys.add(event.code);
-  if (event.code === 'KeyE') {
-    const h = nearestHouse();
-    if (h) visitHouse(h.homeId);
+  if (event.code === 'KeyE' && !event.repeat) {
+    interactNearest();
   }
 });
 
@@ -1726,15 +2094,27 @@ function downsampleVoice(input, inputRate) {
   return output;
 }
 
-function socketAudioBuffer(value) {
-  if (value instanceof ArrayBuffer) return value;
-  if (ArrayBuffer.isView(value)) {
-    return value.buffer.slice(value.byteOffset, value.byteOffset + value.byteLength);
+function pcmToBase64(pcm) {
+  const bytes = new Uint8Array(pcm.buffer, pcm.byteOffset, pcm.byteLength);
+  let binary = '';
+  const chunk = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunk) {
+    binary += String.fromCharCode(...bytes.subarray(i, Math.min(i + chunk, bytes.length)));
   }
-  if (value && value.type === 'Buffer' && Array.isArray(value.data)) {
-    return Uint8Array.from(value.data).buffer;
+  return btoa(binary);
+}
+
+function base64ToPcm(value) {
+  if (typeof value !== 'string' || !value) return null;
+  try {
+    const binary = atob(value);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
+    if (bytes.byteLength < 2 || bytes.byteLength % 2 !== 0) return null;
+    return new Int16Array(bytes.buffer);
+  } catch {
+    return null;
   }
-  return null;
 }
 
 async function startVoiceRelay() {
@@ -1746,6 +2126,10 @@ async function startVoiceRelay() {
   }
   if (voiceAudioContext.state === 'suspended') await voiceAudioContext.resume();
 
+  voiceOutputGain = voiceAudioContext.createGain();
+  voiceOutputGain.gain.value = 1.65;
+  voiceOutputGain.connect(voiceAudioContext.destination);
+
   voiceInputSource = voiceAudioContext.createMediaStreamSource(localStream);
   voiceProcessor = voiceAudioContext.createScriptProcessor(2048, 1, 1);
   voiceSilentGain = voiceAudioContext.createGain();
@@ -1755,7 +2139,7 @@ async function startVoiceRelay() {
     if (!voiceEnabled || !socialState || !socialState.party) return;
     const input = event.inputBuffer.getChannelData(0);
     const pcm = downsampleVoice(input, voiceAudioContext.sampleRate);
-    if (pcm.byteLength) socket.volatile.emit('voice:pcm', pcm.buffer);
+    if (pcm.byteLength) socket.emit('voice:pcm', pcmToBase64(pcm));
   };
 
   voiceInputSource.connect(voiceProcessor);
@@ -1779,9 +2163,14 @@ function stopVoiceRelay() {
     try { voiceSilentGain.disconnect(); } catch {}
   }
 
+  if (voiceOutputGain) {
+    try { voiceOutputGain.disconnect(); } catch {}
+  }
+
   voiceProcessor = null;
   voiceInputSource = null;
   voiceSilentGain = null;
+  voiceOutputGain = null;
 
   if (voiceAudioContext && voiceAudioContext.state !== 'closed') {
     voiceAudioContext.close().catch(() => {});
@@ -1793,17 +2182,20 @@ function playRelayedVoice(fromId, rawPcm) {
   if (!voiceEnabled || !voiceRelayActive || !voiceAudioContext) return;
   if (!socialState || !socialState.party || !isPartyMember(fromId)) return;
 
-  const raw = socketAudioBuffer(rawPcm);
-  if (!raw || raw.byteLength < 2) return;
+  const pcm = base64ToPcm(rawPcm);
+  if (!pcm || !pcm.length) return;
 
-  const pcm = new Int16Array(raw);
+  if (voiceAudioContext.state === 'suspended') {
+    voiceAudioContext.resume().catch(() => {});
+  }
+
   const audioBuffer = voiceAudioContext.createBuffer(1, pcm.length, VOICE_SAMPLE_RATE);
   const samples = audioBuffer.getChannelData(0);
   for (let i = 0; i < pcm.length; i += 1) samples[i] = pcm[i] / 32768;
 
   const source = voiceAudioContext.createBufferSource();
   source.buffer = audioBuffer;
-  source.connect(voiceAudioContext.destination);
+  source.connect(voiceOutputGain || voiceAudioContext.destination);
 
   let startAt = voicePlaybackCursors.get(fromId) || voiceAudioContext.currentTime + 0.06;
   if (startAt < voiceAudioContext.currentTime || startAt > voiceAudioContext.currentTime + 0.45) {
@@ -2397,38 +2789,51 @@ lookpad.addEventListener('pointerup', () => {
 });
 
 document.querySelector('#mobile-e').addEventListener('click', () => {
-  const h = nearestHouse();
-  if (h) visitHouse(h.homeId);
+  interactNearest();
 });
 
 function updatePrompt() {
   const prompt = document.querySelector('#prompt');
-  const nearest = nearestHouse();
+  const nearest = nearestInteractable();
 
-  if (!nearest) {
+  if (!nearest || transitioningHouse) {
     prompt.classList.remove('show');
     return;
   }
 
-  let title = 'Neighborhood House';
-  let kicker = 'NEARBY HOME';
+  let title = 'Interact';
+  let kicker = 'NEARBY';
+  let detail = 'Press E';
 
-  if (nearest.permanent) {
-    title = 'Home #' + (nearest.homeId + 1);
-    if (socialState && nearest.homeId === socialState.self.residenceHomeId) {
+  if (nearest.type === 'bench') {
+    kicker = 'PUBLIC SEAT';
+    title = 'Sit down';
+    detail = Math.max(1, Math.round(nearest.distance)) + 'm away · Press E';
+  } else if (nearest.type === 'bench-exit') {
+    kicker = 'PUBLIC SEAT';
+    title = 'Stand up';
+    detail = 'Press E';
+  } else if (nearest.type === 'exit') {
+    kicker = 'HOME INTERIOR';
+    title = 'Leave house';
+    detail = 'Front door · Press E';
+  } else if (nearest.type === 'house') {
+    title = nearest.permanent ? 'Home #' + (nearest.homeId + 1) : 'Neighborhood House';
+    kicker = nearest.permanent ? 'NEARBY HOME' : 'EXPLORE';
+
+    if (nearest.permanent && socialState && nearest.homeId === socialState.self.residenceHomeId) {
       kicker = 'YOUR RESIDENCE';
-      title = 'Welcome Home';
-    } else if (socialState && nearest.homeId === socialState.self.homeId) {
+      title = 'Enter your home';
+    } else if (nearest.permanent && socialState && nearest.homeId === socialState.self.homeId) {
       kicker = 'YOUR ASSIGNED HOME';
     }
-  } else {
-    kicker = 'EXPLORE';
+
+    detail = Math.max(1, Math.round(nearest.distance)) + 'm away · Press E';
   }
 
   document.querySelector('#house-kicker').textContent = kicker;
   document.querySelector('#prompt-text').textContent = title;
-  document.querySelector('#house-distance').textContent =
-    Math.max(1, Math.round(nearest.distance)) + 'm away · Press E';
+  document.querySelector('#house-distance').textContent = detail;
   prompt.classList.add('show');
 }
 
@@ -2445,13 +2850,14 @@ function frame(now) {
     updateRemote(delta, time);
     updateAvatarAnimation(me, time, delta);
     updateCamera(delta);
-    updateWorldStreaming(me.position.x, me.position.z);
+    if (!insideHouse) updateWorldStreaming(me.position.x, me.position.z);
     sky.position.set(me.position.x, 0, me.position.z);
     sun.position.set(me.position.x - 42, 68, me.position.z + 34);
     sun.target.position.set(me.position.x, 0, me.position.z);
     if (!sun.target.parent) scene.add(sun.target);
     updatePrompt();
     drawMinimap();
+    updateNpcLife(delta, time);
 
     if (now - lastNetworkSend > 50) {
       socket.volatile.emit('player:update', {
