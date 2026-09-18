@@ -1535,7 +1535,8 @@ function updateLocal(delta) {
     forward /= Math.max(length, 1);
     strafe /= Math.max(length, 1);
 
-    const sprinting = keys.has('ShiftLeft') || keys.has('ShiftRight');
+    const mobileSprint = IS_COARSE_POINTER && Math.hypot(joystick.x, joystick.y) > .9;
+    const sprinting = keys.has('ShiftLeft') || keys.has('ShiftRight') || mobileSprint;
     const speed = sprinting ? 11.4 : 5.6;
     me.userData.sprinting = sprinting;
     const sin = Math.sin(cameraYaw);
