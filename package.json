@@ -1,0 +1,19 @@
+{
+  "name": "first-3d-game",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Multiplayer third-person social hangout game prototype",
+  "scripts": {
+    "dev": "concurrently -n server,client -c auto \"npm --prefix server run dev\" \"npm --prefix client run dev -- --host 0.0.0.0\"",
+    "install:apps": "npm --prefix server install && npm --prefix client install",
+    "postinstall": "npm run install:apps",
+    "build": "npm --prefix client run build",
+    "start": "npm --prefix server start"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "devDependencies": {
+    "concurrently": "^9.2.1"
+  }
+}
