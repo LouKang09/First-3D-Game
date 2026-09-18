@@ -1182,6 +1182,8 @@ function createAvatar(data, local = false) {
 
 const npcActors = [];
 const npcCars = [];
+const trafficSignals = [];
+let trafficSignalGroup = null;
 
 function makeNpcWalker(index, route, runner = false) {
   const outfits = ['sky', 'berry', 'mint', 'street', 'sunrise'];
@@ -1333,6 +1335,8 @@ function makeNpcCar(index, axis, lane, direction) {
   scene.add(g);
   const speed = 8 + (index % 3) * 1.4;
   npcCars.push({
+    kind: 'car',
+    vehicleIndex: index,
     mesh: g,
     axis,
     lane,
@@ -1342,9 +1346,116 @@ function makeNpcCar(index, axis, lane, direction) {
     currentSpeed: speed,
     wheels,
     brakeMaterial,
+    bodyHalfWidth: 2.45,
+    bodyHalfLength: 4.0,
     blockedSince: 0,
     hornCount: 0,
-    pendingReverse: false,
+    avoidance: null,
+    clearSince: 0
+  });
+}
+
+function makeNpcMotorcycle(index, axis, lane, direction) {
+  const g = new THREE.Group();
+  const colors = [0x20242b, 0xc94f4f, 0x4f79bd, 0xe0a84f, 0x4f9a72];
+  const bodyColor = colors[index % colors.length];
+  const dark = material(0x24282f, .88);
+  const metal = material(0x8b939d, .42);
+  const skin = material(index % 2 ? 0xd99b73 : 0xf1c2a2, .68);
+  const riderTop = material(index % 2 ? 0x355a78 : 0x8c526f, .65);
+
+  const wheels = [];
+  [-1.22, 1.22].forEach((z) => {
+    const wheel = new THREE.Mesh(new THREE.TorusGeometry(.43, .11, 8, 18), dark);
+    wheel.rotation.y = Math.PI / 2;
+    wheel.position.set(0, .46, z);
+    wheel.castShadow = true;
+    g.add(wheel);
+    wheels.push(wheel);
+  });
+
+  cube(.42, .36, 1.8, bodyColor, 0, .72, .05, g);
+  cube(.72, .18, .82, 0x30343b, 0, 1.0, -.28, g);
+  cube(.16, .72, .16, metal, 0, 1.18, .82, g);
+  cube(1.02, .12, .12, metal, 0, 1.48, .82, g);
+
+  const frontFork = new THREE.Mesh(new THREE.CylinderGeometry(.055, .055, 1.15, 8), metal);
+  frontFork.position.set(0, .82, 1.03);
+  frontFork.rotation.x = -.18;
+  g.add(frontFork);
+
+  // Seated NPC rider: torso, helmet/head, bent arms and legs are visibly attached to the bike.
+  const rider = new THREE.Group();
+  const torso = new THREE.Mesh(new THREE.CapsuleGeometry(.24, .72, 5, 10), riderTop);
+  torso.position.set(0, 1.72, -.22);
+  torso.rotation.x = -.25;
+  rider.add(torso);
+
+  const head = new THREE.Mesh(new THREE.SphereGeometry(.3, 16, 12), skin);
+  head.position.set(0, 2.32, .05);
+  rider.add(head);
+
+  const helmet = new THREE.Mesh(
+    new THREE.SphereGeometry(.33, 16, 10, 0, Math.PI * 2, 0, Math.PI * .62),
+    material(index % 2 ? 0x30343b : 0x6b4b8a, .72)
+  );
+  helmet.position.set(0, 2.43, .03);
+  rider.add(helmet);
+
+  [-1, 1].forEach((side) => {
+    const arm = new THREE.Mesh(new THREE.CapsuleGeometry(.075, .62, 4, 8), skin);
+    arm.position.set(side * .28, 1.73, .35);
+    arm.rotation.x = -1.05;
+    arm.rotation.z = side * -.18;
+    rider.add(arm);
+
+    const leg = new THREE.Mesh(new THREE.CapsuleGeometry(.09, .7, 4, 8), material(0x323946, .72));
+    leg.position.set(side * .2, 1.05, -.12);
+    leg.rotation.x = .72;
+    leg.rotation.z = side * .09;
+    rider.add(leg);
+  });
+
+  g.add(rider);
+
+  if (axis === 'x') {
+    g.position.set(direction > 0 ? -82 : 82, 0, lane);
+    g.rotation.y = direction > 0 ? Math.PI / 2 : -Math.PI / 2;
+  } else {
+    g.position.set(lane, 0, direction > 0 ? -82 : 82);
+    g.rotation.y = direction > 0 ? 0 : Math.PI;
+  }
+
+  g.scale.setScalar(1.18);
+  if (MOBILE_PERF_MODE) {
+    g.traverse((node) => {
+      if (node.isMesh) node.castShadow = false;
+    });
+  }
+
+  scene.add(g);
+  const speed = 9.2 + (index % 2) * 1.1;
+  npcCars.push({
+    kind: 'motorcycle',
+    vehicleIndex: index,
+    mesh: g,
+    axis,
+    lane,
+    laneOffset: lane,
+    direction,
+    speed,
+    currentSpeed: speed,
+    wheels,
+    brakeMaterial: new THREE.MeshStandardMaterial({
+      color: 0x9f2525,
+      emissive: 0x4b0909,
+      emissiveIntensity: .35
+    }),
+    bodyHalfWidth: .72,
+    bodyHalfLength: 1.65,
+    blockedSince: 0,
+    hornCount: 0,
+    avoidance: null,
     clearSince: 0
   });
 }
@@ -1360,12 +1471,17 @@ function initNpcLife() {
 
   for (let i = 0; i < 8; i += 1) makeNpcWalker(i, routes[i % routes.length], i === 2 || i === 6);
 
-  makeNpcCar(0, 'x', -3.8, 1);
-  makeNpcCar(1, 'x', 3.8, -1);
-  makeNpcCar(2, 'z', -3.8, 1);
-  makeNpcCar(3, 'z', 3.8, -1);
-  makeNpcCar(4, 'x', -5.4, -1);
-  makeNpcCar(5, 'z', 5.4, 1);
+  // Properly separated two-way lanes. The previous 1.6-unit lane gap was narrower
+  // than the enlarged cars and caused side-by-side false collision stops.
+  makeNpcCar(0, 'x', -4.35, 1);
+  makeNpcCar(1, 'x', 4.35, -1);
+  makeNpcCar(2, 'z', -4.35, 1);
+  makeNpcCar(3, 'z', 4.35, -1);
+
+  makeNpcMotorcycle(10, 'x', -4.35, 1);
+  makeNpcMotorcycle(11, 'x', 4.35, -1);
+  makeNpcMotorcycle(12, 'z', -4.35, 1);
+  makeNpcMotorcycle(13, 'z', 4.35, -1);
 }
 initNpcLife();
 
@@ -1373,6 +1489,80 @@ let populationChunkX = 0;
 let populationChunkZ = 0;
 let populationOriginX = 0;
 let populationOriginZ = 0;
+
+function makeTrafficSignalHead(axis, x, z, rotationY = 0) {
+  const holder = new THREE.Group();
+  holder.position.set(x, 0, z);
+  holder.rotation.y = rotationY;
+
+  cube(.18, 5.0, .18, 0x3a414a, 0, 2.5, 0, holder);
+  cube(.82, 2.18, .58, 0x20252c, 0, 4.45, 0, holder);
+
+  const redMat = new THREE.MeshStandardMaterial({ color: 0x4f1717, emissive: 0xff3030, emissiveIntensity: .12 });
+  const yellowMat = new THREE.MeshStandardMaterial({ color: 0x514719, emissive: 0xffd43b, emissiveIntensity: .08 });
+  const greenMat = new THREE.MeshStandardMaterial({ color: 0x174f29, emissive: 0x37e56a, emissiveIntensity: .08 });
+
+  [
+    { y: 5.08, mat: redMat },
+    { y: 4.45, mat: yellowMat },
+    { y: 3.82, mat: greenMat }
+  ].forEach((light) => {
+    const lens = new THREE.Mesh(new THREE.SphereGeometry(.21, 12, 9), light.mat);
+    lens.position.set(0, light.y, .31);
+    holder.add(lens);
+  });
+
+  trafficSignalGroup.add(holder);
+  trafficSignals.push({ axis, redMat, yellowMat, greenMat });
+}
+
+function initTrafficSignals() {
+  trafficSignalGroup = new THREE.Group();
+  scene.add(trafficSignalGroup);
+
+  makeTrafficSignalHead('x', -10.7, -10.7, 0);
+  makeTrafficSignalHead('x', 10.7, 10.7, Math.PI);
+  makeTrafficSignalHead('z', 10.7, -10.7, Math.PI / 2);
+  makeTrafficSignalHead('z', -10.7, 10.7, -Math.PI / 2);
+}
+
+function trafficPhase(now = performance.now()) {
+  const cycle = (now / 1000) % 30;
+  if (cycle < 11) return { x: 'green', z: 'red' };
+  if (cycle < 14) return { x: 'yellow', z: 'red' };
+  if (cycle < 25) return { x: 'red', z: 'green' };
+  if (cycle < 28) return { x: 'red', z: 'yellow' };
+  return { x: 'red', z: 'red' };
+}
+
+function updateTrafficSignals(now = performance.now()) {
+  const phase = trafficPhase(now);
+  trafficSignals.forEach((signal) => {
+    const state = phase[signal.axis];
+    signal.redMat.emissiveIntensity = state === 'red' ? 2.2 : .12;
+    signal.yellowMat.emissiveIntensity = state === 'yellow' ? 2.1 : .08;
+    signal.greenMat.emissiveIntensity = state === 'green' ? 2.0 : .08;
+  });
+}
+
+function distanceToIntersection(vehicle) {
+  if (vehicle.axis === 'x') {
+    return (populationOriginX - vehicle.mesh.position.x) * vehicle.direction;
+  }
+  return (populationOriginZ - vehicle.mesh.position.z) * vehicle.direction;
+}
+
+function vehicleMustStopForSignal(vehicle, now = performance.now()) {
+  const distance = distanceToIntersection(vehicle);
+  if (distance <= 0 || distance > 14.5) return false;
+
+  const state = trafficPhase(now)[vehicle.axis];
+  if (state === 'red') return true;
+  if (state === 'yellow' && distance > 4.2) return true;
+  return false;
+}
+
+initTrafficSignals();
 
 function updatePopulationZone(chunkX, chunkZ) {
   if (chunkX === populationChunkX && chunkZ === populationChunkZ) return;
@@ -1400,23 +1590,25 @@ function updatePopulationZone(chunkX, chunkZ) {
     );
   });
 
+  if (trafficSignalGroup) {
+    trafficSignalGroup.position.set(populationOriginX, 0, populationOriginZ);
+  }
+
   npcCars.forEach((car, index) => {
     car.currentSpeed = car.speed;
+    car.blockedSince = 0;
+    car.hornCount = 0;
+    car.avoidance = null;
+
+    const stagger = ((index * 19) % 62) - 10;
+    const longitudinal = car.direction > 0 ? -40 + stagger : 40 - stagger;
 
     if (car.axis === 'x') {
       car.lane = populationOriginZ + car.laneOffset;
-      car.mesh.position.set(
-        populationOriginX + (car.direction > 0 ? -42 : 42) + index * .35,
-        0,
-        car.lane
-      );
+      car.mesh.position.set(populationOriginX + longitudinal, 0, car.lane);
     } else {
       car.lane = populationOriginX + car.laneOffset;
-      car.mesh.position.set(
-        car.lane,
-        0,
-        populationOriginZ + (car.direction > 0 ? -42 : 42) + index * .35
-      );
+      car.mesh.position.set(car.lane, 0, populationOriginZ + longitudinal);
     }
   });
 }
@@ -1438,60 +1630,130 @@ function trafficCharacters() {
   return characters;
 }
 
-function pointAheadOfCar(car, point, forwardDistance = 9.5, lateralDistance = 2.8, direction = car.direction) {
-  const cx = car.mesh.position.x;
-  const cz = car.mesh.position.z;
+function vehicleLateralPosition(vehicle) {
+  return vehicle.axis === 'x' ? vehicle.mesh.position.z : vehicle.mesh.position.x;
+}
 
-  if (car.axis === 'x') {
+function pointAheadOfCar(vehicle, point, forwardDistance = 10, lateralDistance = null, direction = vehicle.direction) {
+  const cx = vehicle.mesh.position.x;
+  const cz = vehicle.mesh.position.z;
+  const lateralLimit = lateralDistance ?? (vehicle.kind === 'motorcycle' ? 1.0 : 2.25);
+  const currentLateral = vehicleLateralPosition(vehicle);
+
+  if (vehicle.axis === 'x') {
     const ahead = (point.x - cx) * direction;
-    const lateral = Math.abs(point.z - car.lane);
-    return ahead > 0 && ahead < forwardDistance && lateral < lateralDistance;
+    const lateral = Math.abs(point.z - currentLateral);
+    return ahead > .2 && ahead < forwardDistance && lateral < lateralLimit;
   }
 
   const ahead = (point.z - cz) * direction;
-  const lateral = Math.abs(point.x - car.lane);
-  return ahead > 0 && ahead < forwardDistance && lateral < lateralDistance;
+  const lateral = Math.abs(point.x - currentLateral);
+  return ahead > .2 && ahead < forwardDistance && lateral < lateralLimit;
 }
 
-function carRoadBlocked(car, direction = car.direction) {
-  if (trafficCharacters().some((p) => pointAheadOfCar(car, p, 9.5, 2.8, direction))) {
-    return true;
-  }
+function nearestCharacterAhead(vehicle, forwardDistance = 10) {
+  let nearest = null;
+  const lateralLimit = vehicle.kind === 'motorcycle' ? 1.2 : 2.45;
 
+  trafficCharacters().forEach((point) => {
+    if (!pointAheadOfCar(vehicle, point, forwardDistance, lateralLimit)) return;
+
+    const ahead = vehicle.axis === 'x'
+      ? (point.x - vehicle.mesh.position.x) * vehicle.direction
+      : (point.z - vehicle.mesh.position.z) * vehicle.direction;
+
+    if (!nearest || ahead < nearest.ahead) nearest = { point, ahead };
+  });
+
+  return nearest;
+}
+
+function vehicleRoadBlocked(vehicle, direction = vehicle.direction) {
   return npcCars.some((other) => {
-    if (other === car || !other.mesh.visible) return false;
+    if (other === vehicle || !other.mesh.visible) return false;
+    if (vehicle.axis !== other.axis) return false;
 
-    const dx = other.mesh.position.x - car.mesh.position.x;
-    const dz = other.mesh.position.z - car.mesh.position.z;
-    const distance = Math.hypot(dx, dz);
+    // Only vehicles occupying essentially the same lane can block one another.
+    // Adjacent/opposing lanes no longer trigger proximity collision braking.
+    const laneGap = Math.abs(vehicleLateralPosition(vehicle) - vehicleLateralPosition(other));
+    const sameLaneTolerance = Math.max(1.0, (vehicle.bodyHalfWidth + other.bodyHalfWidth) * .42);
+    if (laneGap > sameLaneTolerance) return false;
 
-    // Close cars at intersections get priority spacing regardless of axis.
-    if (distance < 8.2) {
-      const forwardX = car.axis === 'x' ? direction : 0;
-      const forwardZ = car.axis === 'z' ? direction : 0;
-      const dot = dx * forwardX + dz * forwardZ;
-      if (dot > 0) return true;
-    }
+    const dx = other.mesh.position.x - vehicle.mesh.position.x;
+    const dz = other.mesh.position.z - vehicle.mesh.position.z;
+    const ahead = vehicle.axis === 'x' ? dx * direction : dz * direction;
+    if (ahead <= .2) return false;
 
-    if (car.axis === other.axis) {
-      return pointAheadOfCar(car, other.mesh.position, 13.5, 3.5, direction);
-    }
-
-    return false;
+    const safeGap = vehicle.bodyHalfLength + other.bodyHalfLength + 3.0;
+    return ahead < safeGap;
   });
 }
 
-function carShouldBrake(car) {
-  return carRoadBlocked(car, car.direction);
+function avoidancePathClear(vehicle) {
+  if (distanceToIntersection(vehicle) > 0 && distanceToIntersection(vehicle) < 17) return false;
+
+  const inwardSide = vehicle.laneOffset > 0 ? -1 : 1;
+  const targetLateral = vehicle.lane + inwardSide * (vehicle.kind === 'motorcycle' ? 2.1 : 3.25);
+
+  return !npcCars.some((other) => {
+    if (other === vehicle || !other.mesh.visible || other.axis !== vehicle.axis) return false;
+
+    const otherLateral = vehicleLateralPosition(other);
+    if (Math.abs(otherLateral - targetLateral) > vehicle.bodyHalfWidth + other.bodyHalfWidth + .8) return false;
+
+    const longitudinalGap = vehicle.axis === 'x'
+      ? Math.abs(other.mesh.position.x - vehicle.mesh.position.x)
+      : Math.abs(other.mesh.position.z - vehicle.mesh.position.z);
+
+    return longitudinalGap < 18;
+  });
 }
 
-function reverseCarDirection(car) {
-  car.direction *= -1;
-  car.mesh.rotation.y += Math.PI;
-  car.currentSpeed = 0;
-  car.blockedSince = 0;
-  car.hornCount = 0;
-  car.pendingReverse = false;
+function startVehicleAvoidance(vehicle, now = performance.now()) {
+  if (vehicle.avoidance || !avoidancePathClear(vehicle)) return false;
+
+  vehicle.avoidance = {
+    startedAt: now,
+    duration: vehicle.kind === 'motorcycle' ? 2400 : 3200,
+    side: vehicle.laneOffset > 0 ? -1 : 1,
+    amplitude: vehicle.kind === 'motorcycle' ? 2.15 : 3.25
+  };
+  vehicle.blockedSince = 0;
+  vehicle.hornCount = 0;
+  return true;
+}
+
+function updateVehicleAvoidance(vehicle, now) {
+  if (!vehicle.avoidance) return false;
+
+  const progress = THREE.MathUtils.clamp(
+    (now - vehicle.avoidance.startedAt) / vehicle.avoidance.duration,
+    0,
+    1
+  );
+  const curve = Math.sin(progress * Math.PI);
+  const targetLateral = vehicle.lane + vehicle.avoidance.side * vehicle.avoidance.amplitude * curve;
+
+  if (vehicle.axis === 'x') {
+    vehicle.mesh.position.z = THREE.MathUtils.lerp(vehicle.mesh.position.z, targetLateral, .18);
+  } else {
+    vehicle.mesh.position.x = THREE.MathUtils.lerp(vehicle.mesh.position.x, targetLateral, .18);
+  }
+
+  if (progress >= 1) {
+    vehicle.avoidance = null;
+    if (vehicle.axis === 'x') vehicle.mesh.position.z = vehicle.lane;
+    else vehicle.mesh.position.x = vehicle.lane;
+    return false;
+  }
+  return true;
+}
+
+function carShouldBrake(vehicle, now = performance.now()) {
+  if (vehicleMustStopForSignal(vehicle, now)) return true;
+  if (vehicleRoadBlocked(vehicle, vehicle.direction)) return true;
+  if (vehicle.avoidance) return false;
+  return Boolean(nearestCharacterAhead(vehicle, vehicle.kind === 'motorcycle' ? 8.2 : 10.5));
 }
 
 let gameAudioContext = null;
@@ -1780,11 +2042,18 @@ function updateNpcLife(delta, time) {
     updateAvatarAnimation(npc.mesh, time + npc.segment * .7, delta);
   });
 
+  updateTrafficSignals(performance.now());
+
   npcCars.forEach((car) => {
     const now = performance.now();
-    const braking = carShouldBrake(car);
+    const characterAhead = car.avoidance ? null : nearestCharacterAhead(
+      car,
+      car.kind === 'motorcycle' ? 8.2 : 10.5
+    );
+    const signalStop = vehicleMustStopForSignal(car, now);
+    const vehicleStop = vehicleRoadBlocked(car, car.direction);
 
-    if (braking) {
+    if (characterAhead && !signalStop && !vehicleStop) {
       if (!car.blockedSince) car.blockedSince = now;
       const stoppedFor = now - car.blockedSince;
 
@@ -1796,38 +2065,52 @@ function updateNpcLife(delta, time) {
       if (stoppedFor >= 10000 && car.hornCount < 2) {
         playCarHorn(car);
         car.hornCount = 2;
-        car.pendingReverse = true;
       }
 
-      // After two honks (~10 seconds stopped), reverse only when the path behind is clear.
-      if (car.pendingReverse && !carRoadBlocked(car, -car.direction)) {
-        reverseCarDirection(car);
+      // After two horn cycles, take a smooth curved path around the pedestrian
+      // instead of reversing direction. It only starts when the passing path is clear.
+      if (stoppedFor >= 10000 && car.hornCount >= 2) {
+        startVehicleAvoidance(car, now);
       }
-    } else {
+    } else if (!signalStop && !vehicleStop && !car.avoidance) {
       car.blockedSince = 0;
       car.hornCount = 0;
-      car.pendingReverse = false;
     }
 
-    const targetSpeed = braking ? 0 : car.speed;
+    const avoiding = updateVehicleAvoidance(car, now);
+    const braking = !avoiding && (signalStop || vehicleStop || Boolean(characterAhead));
+    const targetSpeed = braking ? 0 : car.speed * (avoiding ? .72 : 1);
+
     car.currentSpeed = THREE.MathUtils.lerp(
       car.currentSpeed,
       targetSpeed,
-      Math.min(1, delta * (braking ? 8.5 : 2.4))
+      Math.min(1, delta * (braking ? 8.5 : 2.8))
     );
 
-    car.brakeMaterial.emissiveIntensity = braking ? 2.2 : .55;
+    if (car.brakeMaterial) {
+      car.brakeMaterial.emissiveIntensity = braking ? 2.2 : .45;
+    }
 
     car.wheels.forEach((wheel) => {
-      wheel.rotation.x -= car.currentSpeed * delta * .72;
+      if (car.kind === 'motorcycle') {
+        wheel.rotation.x -= car.currentSpeed * delta * 1.15;
+      } else {
+        wheel.rotation.x -= car.currentSpeed * delta * .72;
+      }
     });
 
     if (car.axis === 'x') {
       car.mesh.position.x += car.direction * car.currentSpeed * delta;
+      if (!car.avoidance) {
+        car.mesh.position.z = THREE.MathUtils.lerp(car.mesh.position.z, car.lane, Math.min(1, delta * 5));
+      }
       if (car.mesh.position.x > populationOriginX + 44) car.mesh.position.x = populationOriginX - 44;
       if (car.mesh.position.x < populationOriginX - 44) car.mesh.position.x = populationOriginX + 44;
     } else {
       car.mesh.position.z += car.direction * car.currentSpeed * delta;
+      if (!car.avoidance) {
+        car.mesh.position.x = THREE.MathUtils.lerp(car.mesh.position.x, car.lane, Math.min(1, delta * 5));
+      }
       if (car.mesh.position.z > populationOriginZ + 44) car.mesh.position.z = populationOriginZ - 44;
       if (car.mesh.position.z < populationOriginZ - 44) car.mesh.position.z = populationOriginZ + 44;
     }
