@@ -66,8 +66,12 @@ app.innerHTML = [
       '<div id="toasts"></div>',
       '<div id="mobile-controls">',
         '<div id="joystick" class="joystick" aria-label="Movement joystick"><span class="joystick-label">MOVE</span><div id="stick"></div></div>',
-        '<div id="lookpad" class="lookpad"></div>',
-        '<button id="mobile-e" class="mobile-e">E</button>',
+        '<div id="lookpad" class="lookpad"><span class="look-hint">DRAG TO LOOK</span></div>',
+        '<div class="mobile-actions">',
+          '<button id="mobile-jump" class="mobile-action mobile-jump"><strong>↑</strong><span>JUMP</span></button>',
+          '<button id="mobile-punch" class="mobile-action mobile-punch"><strong>✦</strong><span>PUNCH</span></button>',
+          '<button id="mobile-e" class="mobile-action mobile-e"><strong>E</strong><span>INTERACT</span></button>',
+        '</div>',
       '</div>',
     '</div>',
   '</div>'
@@ -143,8 +147,13 @@ fetch('/voice-config')
   .catch(() => {});
 
 const worldEl = document.querySelector('#world');
-const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
-renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+const IS_COARSE_POINTER = window.matchMedia('(pointer: coarse)').matches;
+const MOBILE_PERF_MODE = IS_COARSE_POINTER || window.innerWidth < 760;
+const renderer = new THREE.WebGLRenderer({
+  antialias: !MOBILE_PERF_MODE,
+  powerPreference: 'high-performance'
+});
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, MOBILE_PERF_MODE ? 1.25 : 1.75));
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
@@ -164,7 +173,7 @@ scene.add(new THREE.HemisphereLight(0xf4fbff, 0x52684c, 2.15));
 const sun = new THREE.DirectionalLight(0xfff0d8, 3.35);
 sun.position.set(-42, 68, 34);
 sun.castShadow = true;
-sun.shadow.mapSize.set(2048, 2048);
+sun.shadow.mapSize.set(MOBILE_PERF_MODE ? 1024 : 2048, MOBILE_PERF_MODE ? 1024 : 2048);
 sun.shadow.camera.left = -92;
 sun.shadow.camera.right = 92;
 sun.shadow.camera.top = 92;
@@ -545,7 +554,9 @@ for (let i = 0; i < 12; i += 1) {
 
 
 const CHUNK_SIZE = 96;
-const ACTIVE_CHUNK_RADIUS = 2;
+const ACTIVE_CHUNK_RADIUS = MOBILE_PERF_MODE ? 1 : 2;
+let streamedCenterChunkX = null;
+let streamedCenterChunkZ = null;
 const chunkGroups = new Map();
 const proceduralHouses = new Map();
 const proceduralTrees = new Map();
@@ -764,9 +775,19 @@ function removeChunk(key) {
   }
 }
 
-function updateWorldStreaming(x, z) {
+function updateWorldStreaming(x, z, force = false) {
   const centerX = Math.round(x / CHUNK_SIZE);
   const centerZ = Math.round(z / CHUNK_SIZE);
+
+  if (
+    !force &&
+    centerX === streamedCenterChunkX &&
+    centerZ === streamedCenterChunkZ
+  ) return;
+
+  streamedCenterChunkX = centerX;
+  streamedCenterChunkZ = centerZ;
+
   const needed = new Set();
 
   for (let dx = -ACTIVE_CHUNK_RADIUS; dx <= ACTIVE_CHUNK_RADIUS; dx += 1) {
@@ -782,9 +803,13 @@ function updateWorldStreaming(x, z) {
   for (const key of Array.from(chunkGroups.keys())) {
     if (!needed.has(key)) removeChunk(key);
   }
+
+  if (typeof updatePopulationZone === 'function') {
+    updatePopulationZone(centerX, centerZ);
+  }
 }
 
-updateWorldStreaming(0, 0);
+updateWorldStreaming(0, 0, true);
 
 function createAvatar(data, local = false) {
   const gender = data.gender === 'male' ? 'male' : 'female';
@@ -1080,11 +1105,17 @@ function makeNpcWalker(index, route, runner = false) {
   }, false);
 
   mesh.userData.groundRing.visible = false;
+  if (MOBILE_PERF_MODE) {
+    mesh.traverse((node) => {
+      if (node.isMesh) node.castShadow = false;
+    });
+  }
   npcActors.push({
     id: 'npc-' + index,
     name: names[index % names.length],
     mesh,
     route,
+    routeTemplate: route.map((point) => [point[0], point[1]]),
     segment: index % route.length,
     progress: (index * .19) % 1,
     speed: runner ? 4.0 + (index % 2) * .35 : 1.75 + (index % 3) * .16,
@@ -1188,12 +1219,19 @@ function makeNpcCar(index, axis, lane, direction) {
     g.rotation.y = direction > 0 ? 0 : Math.PI;
   }
 
+  if (MOBILE_PERF_MODE) {
+    g.traverse((node) => {
+      if (node.isMesh) node.castShadow = false;
+    });
+  }
+
   scene.add(g);
   const speed = 8 + (index % 3) * 1.4;
   npcCars.push({
     mesh: g,
     axis,
     lane,
+    laneOffset: lane,
     direction,
     speed,
     currentSpeed: speed,
@@ -1221,6 +1259,60 @@ function initNpcLife() {
   makeNpcCar(5, 'z', 5.4, 1);
 }
 initNpcLife();
+
+let populationChunkX = 0;
+let populationChunkZ = 0;
+let populationOriginX = 0;
+let populationOriginZ = 0;
+
+function updatePopulationZone(chunkX, chunkZ) {
+  if (chunkX === populationChunkX && chunkZ === populationChunkZ) return;
+
+  populationChunkX = chunkX;
+  populationChunkZ = chunkZ;
+  populationOriginX = chunkX * CHUNK_SIZE;
+  populationOriginZ = chunkZ * CHUNK_SIZE;
+
+  npcActors.forEach((npc, index) => {
+    npc.route = npc.routeTemplate.map((point) => [
+      populationOriginX + point[0],
+      populationOriginZ + point[1]
+    ]);
+
+    npc.segment = (npc.segment + index) % npc.route.length;
+    npc.progress = seededValue(chunkX, chunkZ, 700 + index);
+
+    const from = npc.route[npc.segment];
+    const to = npc.route[(npc.segment + 1) % npc.route.length];
+    npc.mesh.position.set(
+      THREE.MathUtils.lerp(from[0], to[0], npc.progress),
+      0,
+      THREE.MathUtils.lerp(from[1], to[1], npc.progress)
+    );
+  });
+
+  npcCars.forEach((car, index) => {
+    car.currentSpeed = car.speed;
+
+    if (car.axis === 'x') {
+      car.lane = populationOriginZ + car.laneOffset;
+      car.mesh.position.set(
+        populationOriginX + (car.direction > 0 ? -42 : 42) + index * .35,
+        0,
+        car.lane
+      );
+    } else {
+      car.lane = populationOriginX + car.laneOffset;
+      car.mesh.position.set(
+        car.lane,
+        0,
+        populationOriginZ + (car.direction > 0 ? -42 : 42) + index * .35
+      );
+    }
+  });
+}
+
+updatePopulationZone(0, 0);
 
 function trafficCharacters() {
   const characters = [];
@@ -1394,12 +1486,12 @@ function updateNpcLife(delta, time) {
 
     if (car.axis === 'x') {
       car.mesh.position.x += car.direction * car.currentSpeed * delta;
-      if (car.mesh.position.x > 88) car.mesh.position.x = -88;
-      if (car.mesh.position.x < -88) car.mesh.position.x = 88;
+      if (car.mesh.position.x > populationOriginX + 44) car.mesh.position.x = populationOriginX - 44;
+      if (car.mesh.position.x < populationOriginX - 44) car.mesh.position.x = populationOriginX + 44;
     } else {
       car.mesh.position.z += car.direction * car.currentSpeed * delta;
-      if (car.mesh.position.z > 88) car.mesh.position.z = -88;
-      if (car.mesh.position.z < -88) car.mesh.position.z = 88;
+      if (car.mesh.position.z > populationOriginZ + 44) car.mesh.position.z = populationOriginZ - 44;
+      if (car.mesh.position.z < populationOriginZ - 44) car.mesh.position.z = populationOriginZ + 44;
     }
   });
 }
@@ -1454,6 +1546,12 @@ function updateLocal(delta) {
 
     me.position.x += dx;
     me.position.z += dz;
+
+    if (insideHouse) {
+      // Keep the player inside the furnished room; leaving is only through E at the door.
+      me.position.x = THREE.MathUtils.clamp(me.position.x, insideHouse.x - 8.0, insideHouse.x + 8.0);
+      me.position.z = THREE.MathUtils.clamp(me.position.z, insideHouse.z - 7.1, insideHouse.z + 6.1);
+    }
 
     const targetRot = Math.atan2(dx, dz);
     me.rotation.y = lerpAngle(me.rotation.y, targetRot, Math.min(1, delta * 12));
@@ -1706,6 +1804,8 @@ async function visitHouse(homeId) {
     label: house.label,
     entranceX: house.entranceX,
     entranceZ: house.entranceZ,
+    x: house.x,
+    z: house.z,
     exitX: house.x,
     exitZ: house.z + 6.3
   };
@@ -1754,7 +1854,7 @@ document.addEventListener('keydown', (event) => {
     event.preventDefault();
     if (me && !me.userData.seated && !transitioningHouse && me.userData.grounded && !event.repeat) {
       me.userData.grounded = false;
-      me.userData.verticalVelocity = 8.4;
+      me.userData.verticalVelocity = insideHouse ? 5.2 : 8.4;
     }
   }
 
@@ -1871,16 +1971,27 @@ document.addEventListener('pointerdown', (event) => {
   }
 });
 
+function cameraZoomLimits() {
+  return insideHouse
+    ? { min: 3.4, max: 7.0 }
+    : { min: 4.8, max: MOBILE_PERF_MODE ? 27 : 38 };
+}
+
+function changeCameraZoom(amount) {
+  const limits = cameraZoomLimits();
+  cameraDistance = THREE.MathUtils.clamp(cameraDistance + amount, limits.min, limits.max);
+}
+
 renderer.domElement.addEventListener('wheel', (event) => {
-  cameraDistance = THREE.MathUtils.clamp(cameraDistance + Math.sign(event.deltaY) * 1.8, 4.8, 38);
+  changeCameraZoom(Math.sign(event.deltaY) * 1.8);
 }, { passive: true });
 
 document.querySelector('#zoom-out-btn').addEventListener('click', () => {
-  cameraDistance = THREE.MathUtils.clamp(cameraDistance + 4, 4.8, 38);
+  changeCameraZoom(4);
 });
 
 document.querySelector('#zoom-in-btn').addEventListener('click', () => {
-  cameraDistance = THREE.MathUtils.clamp(cameraDistance - 4, 4.8, 38);
+  changeCameraZoom(-4);
 });
 
 const genderOptions = document.querySelector('#gender-options');
@@ -3045,13 +3156,26 @@ lookpad.addEventListener('pointermove', (event) => {
   lookPoint = { x: event.clientX, y: event.clientY };
 });
 
-lookpad.addEventListener('pointerup', () => {
+function resetLookpad() {
   lookPointer = null;
   lookPoint = null;
-});
+}
+
+lookpad.addEventListener('pointerup', resetLookpad);
+lookpad.addEventListener('pointercancel', resetLookpad);
 
 document.querySelector('#mobile-e').addEventListener('click', () => {
   interactNearest();
+});
+
+document.querySelector('#mobile-jump').addEventListener('click', () => {
+  if (!me || me.userData.seated || transitioningHouse || !me.userData.grounded) return;
+  me.userData.grounded = false;
+  me.userData.verticalVelocity = insideHouse ? 5.2 : 8.4;
+});
+
+document.querySelector('#mobile-punch').addEventListener('click', () => {
+  punchNearest();
 });
 
 function updatePrompt() {
