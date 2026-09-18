@@ -869,3 +869,90 @@ canvas { -webkit-touch-callout: none; }
     border-radius: 12px !important;
   }
 }
+
+
+/* House transition */
+.house-loading {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: grid;
+  place-items: center;
+  background: rgba(8, 12, 20, .78);
+  backdrop-filter: blur(8px);
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition: opacity .16s ease, visibility .16s ease;
+}
+.house-loading.show {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+}
+.house-loading-card {
+  min-width: 210px;
+  padding: 24px 26px;
+  border-radius: 24px;
+  display: grid;
+  justify-items: center;
+  gap: 10px;
+  color: #f8fafc;
+  background: rgba(24, 31, 45, .92);
+  border: 1px solid rgba(255,255,255,.12);
+  box-shadow: 0 24px 70px rgba(0,0,0,.34);
+}
+.house-loading-card strong {
+  font-size: 15px;
+  letter-spacing: .02em;
+}
+.house-loading-card span {
+  color: #9eacbf;
+  font-size: 10px;
+}
+.house-loader {
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  border: 3px solid rgba(255,255,255,.16);
+  border-top-color: #a5b4fc;
+  animation: haven-house-spin .7s linear infinite;
+}
+@keyframes haven-house-spin {
+  to { transform: rotate(360deg); }
+}
+
+/* Expanded desktop minimap remains circular. */
+@media (hover: hover) and (pointer: fine) and (min-width: 761px) {
+  .minimap:hover,
+  .minimap:focus-within {
+    width: 238px !important;
+    height: 238px !important;
+    min-width: 238px;
+    padding: 7px !important;
+    border-radius: 50% !important;
+  }
+
+  .minimap:hover .map-head,
+  .minimap:focus-within .map-head,
+  .minimap:hover .map-legend,
+  .minimap:focus-within .map-legend {
+    opacity: 0 !important;
+    max-height: 0 !important;
+    padding: 0 !important;
+  }
+
+  .minimap:hover .map-canvas-wrap,
+  .minimap:focus-within .map-canvas-wrap {
+    width: 224px !important;
+    height: 224px !important;
+    border-radius: 50% !important;
+  }
+
+  .minimap:hover .map-canvas-wrap canvas,
+  .minimap:focus-within .map-canvas-wrap canvas {
+    width: 224px !important;
+    height: 224px !important;
+    border-radius: 50% !important;
+  }
+}
