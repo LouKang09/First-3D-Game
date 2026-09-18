@@ -30,7 +30,7 @@ app.innerHTML = [
         '</div>',
         '<div class="avatar-note"><strong>Anime style</strong><span>Stylized proportions · expressive eyes · layered hair</span></div>',
         '<button class="primary" type="submit">Enter Haven</button>',
-        '<p class="fine">WASD to move · Hold Shift to sprint · Drag to look · Left-click players · E to interact</p>',
+        '<p class="fine">WASD to move · Shift sprint · Space jump · Drag to look · Left-click players · E interact</p>',
       '</form>',
     '</div>',
     '<div id="hud" class="hidden">',
@@ -44,7 +44,7 @@ app.innerHTML = [
           '<button id="voice-btn" class="round glass voice-control" title="Join a party to enable speaking" disabled>🎙</button>',
         '</div>',
       '</div>',
-      '<div id="status" class="status glass"><strong id="status-name">Guest</strong><span id="status-home">Home #1</span><div class="keys"><kbd>WASD</kbd> move <kbd>Shift</kbd> sprint <kbd>Click</kbd> player <kbd>E</kbd> interact</div></div>',
+      '<div id="status" class="status glass"><strong id="status-name">Guest</strong><span id="status-home">Home #1</span><div class="keys"><kbd>WASD</kbd> move <kbd>Shift</kbd> sprint <kbd>Space</kbd> jump <kbd>Click</kbd> player <kbd>E</kbd> interact</div></div>',
       '<div id="prompt" class="house-prompt glass">',
         '<div class="house-prompt-icon">⌂</div>',
         '<div class="house-prompt-copy"><small id="house-kicker">NEARBY HOME</small><strong id="prompt-text">Interact</strong><span id="house-distance"></span></div>',
@@ -115,6 +115,13 @@ const remotePlayers = new Map();
 const peers = new Map();
 const voiceReadyPeers = new Set();
 const pendingIceCandidates = new Map();
+let voiceAudioContext = null;
+let voiceInputSource = null;
+let voiceProcessor = null;
+let voiceSilentGain = null;
+let voiceRelayActive = false;
+const voicePlaybackCursors = new Map();
+const VOICE_SAMPLE_RATE = 16000;
 const defaultIceServers = [
   { urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302'] }
 ];
@@ -405,16 +412,7 @@ makeBench(38, 32, -1.15);
 makeBench(26, 41, Math.PI);
 makeBench(-14, 17, Math.PI / 2);
 
-// Distant low-poly town silhouettes add depth without expensive assets.
-for (let i = 0; i < 20; i += 1) {
-  const side = i % 4;
-  const offset = -72 + (i % 5) * 35;
-  const height = 9 + (i % 4) * 4;
-  if (side === 0) cube(16, height, 12, 0x8ca0a9, offset, height / 2, -88);
-  if (side === 1) cube(16, height, 12, 0x8a9aa3, offset, height / 2, 88);
-  if (side === 2) cube(12, height, 16, 0x93a2aa, -88, height / 2, offset);
-  if (side === 3) cube(12, height, 16, 0x879aa3, 88, height / 2, offset);
-}
+// Block-style skyline objects removed because they could overlap the streamed road grid.
 
 const clouds = [];
 function makeCloud(x, y, z, scale = 1) {
@@ -957,14 +955,16 @@ function createAvatar(data, local = false) {
   name.scale.set(3.7, .92, 1);
   root.add(name);
 
-  root.position.set(data.x || 0, 0, data.z || 0);
+  root.position.set(data.x || 0, data.y || 0, data.z || 0);
   root.rotation.y = data.rot || Math.PI;
   root.userData = {
     playerId: data.id || null,
     visual, torso, head, armL, armR, legL, legR, groundRing: ring,
     moving: false,
     sprinting: false,
-    target: new THREE.Vector3(data.x || 0, 0, data.z || 0),
+    grounded: (data.y || 0) <= 0.001,
+    verticalVelocity: 0,
+    target: new THREE.Vector3(data.x || 0, data.y || 0, data.z || 0),
     targetRot: data.rot || Math.PI,
     local
   };
@@ -1029,6 +1029,17 @@ function updateLocal(delta) {
 
   me.userData.moving = moving;
   if (!moving) me.userData.sprinting = false;
+
+  if (!me.userData.grounded || me.position.y > 0) {
+    me.userData.verticalVelocity -= 22 * delta;
+    me.position.y += me.userData.verticalVelocity * delta;
+
+    if (me.position.y <= 0) {
+      me.position.y = 0;
+      me.userData.verticalVelocity = 0;
+      me.userData.grounded = true;
+    }
+  }
 }
 
 function updateAvatarAnimation(group, time, delta) {
@@ -1047,7 +1058,11 @@ function updateAvatarAnimation(group, time, delta) {
   const bob = moving
     ? Math.abs(Math.sin(time * speed * 2)) * (sprinting ? .075 : .045)
     : Math.sin(time * 1.6) * .008;
-  group.position.y = THREE.MathUtils.lerp(group.position.y, bob, Math.min(1, delta * 13));
+  group.userData.visual.position.y = THREE.MathUtils.lerp(
+    group.userData.visual.position.y,
+    bob,
+    Math.min(1, delta * 13)
+  );
 
   group.userData.visual.rotation.z = THREE.MathUtils.lerp(
     group.userData.visual.rotation.z,
@@ -1121,6 +1136,15 @@ function visitHouse(homeId) {
 
 document.addEventListener('keydown', (event) => {
   if (!joined) return;
+
+  if (event.code === 'Space') {
+    event.preventDefault();
+    if (me && me.userData.grounded && !event.repeat) {
+      me.userData.grounded = false;
+      me.userData.verticalVelocity = 8.4;
+    }
+  }
+
   keys.add(event.code);
   if (event.code === 'KeyE') {
     const h = nearestHouse();
@@ -1445,7 +1469,7 @@ function addRemote(data) {
   if (!data || data.id === selfId || remotePlayers.has(data.id)) return;
   const mesh = createAvatar(data, false);
   mesh.userData.playerId = data.id;
-  mesh.userData.target.set(data.x || 0, 0, data.z || 0);
+  mesh.userData.target.set(data.x || 0, data.y || 0, data.z || 0);
   mesh.userData.targetRot = data.rot || 0;
   remotePlayers.set(data.id, { mesh, data });
 }
@@ -1649,9 +1673,10 @@ function renderSocial() {
 
       const voiceNote = document.createElement('div');
       voiceNote.className = 'voice-note';
-      const connectedPeers = Array.from(peers.values()).filter((pc) => pc.connectionState === 'connected').length;
       voiceNote.textContent = voiceEnabled
-        ? 'Microphone on · ' + connectedPeers + ' voice connection(s). Other party members must also enable speaking.'
+        ? (voiceRelayActive
+            ? 'Microphone on · Haven relay active. Other party members must also enable speaking.'
+            : 'Starting party audio…')
         : 'Tap the microphone button above to enable speaking. Voice is limited to your party.';
       body.appendChild(voiceNote);
     }
@@ -1684,6 +1709,111 @@ document.querySelector('#home-btn').addEventListener('click', () => {
   toast('Welcome home.');
 });
 
+function downsampleVoice(input, inputRate) {
+  const ratio = inputRate / VOICE_SAMPLE_RATE;
+  const outputLength = Math.max(1, Math.floor(input.length / ratio));
+  const output = new Int16Array(outputLength);
+
+  for (let i = 0; i < outputLength; i += 1) {
+    const start = Math.floor(i * ratio);
+    const end = Math.min(input.length, Math.max(start + 1, Math.floor((i + 1) * ratio)));
+    let sum = 0;
+    for (let j = start; j < end; j += 1) sum += input[j];
+    const sample = Math.max(-1, Math.min(1, sum / Math.max(1, end - start)));
+    output[i] = sample < 0 ? sample * 0x8000 : sample * 0x7fff;
+  }
+
+  return output;
+}
+
+function socketAudioBuffer(value) {
+  if (value instanceof ArrayBuffer) return value;
+  if (ArrayBuffer.isView(value)) {
+    return value.buffer.slice(value.byteOffset, value.byteOffset + value.byteLength);
+  }
+  if (value && value.type === 'Buffer' && Array.isArray(value.data)) {
+    return Uint8Array.from(value.data).buffer;
+  }
+  return null;
+}
+
+async function startVoiceRelay() {
+  const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+  if (!AudioContextClass || !localStream) throw new Error('Web Audio is unavailable.');
+
+  if (!voiceAudioContext || voiceAudioContext.state === 'closed') {
+    voiceAudioContext = new AudioContextClass({ latencyHint: 'interactive' });
+  }
+  if (voiceAudioContext.state === 'suspended') await voiceAudioContext.resume();
+
+  voiceInputSource = voiceAudioContext.createMediaStreamSource(localStream);
+  voiceProcessor = voiceAudioContext.createScriptProcessor(2048, 1, 1);
+  voiceSilentGain = voiceAudioContext.createGain();
+  voiceSilentGain.gain.value = 0;
+
+  voiceProcessor.onaudioprocess = (event) => {
+    if (!voiceEnabled || !socialState || !socialState.party) return;
+    const input = event.inputBuffer.getChannelData(0);
+    const pcm = downsampleVoice(input, voiceAudioContext.sampleRate);
+    if (pcm.byteLength) socket.volatile.emit('voice:pcm', pcm.buffer);
+  };
+
+  voiceInputSource.connect(voiceProcessor);
+  voiceProcessor.connect(voiceSilentGain);
+  voiceSilentGain.connect(voiceAudioContext.destination);
+  voiceRelayActive = true;
+}
+
+function stopVoiceRelay() {
+  voiceRelayActive = false;
+  voicePlaybackCursors.clear();
+
+  if (voiceProcessor) {
+    voiceProcessor.onaudioprocess = null;
+    try { voiceProcessor.disconnect(); } catch {}
+  }
+  if (voiceInputSource) {
+    try { voiceInputSource.disconnect(); } catch {}
+  }
+  if (voiceSilentGain) {
+    try { voiceSilentGain.disconnect(); } catch {}
+  }
+
+  voiceProcessor = null;
+  voiceInputSource = null;
+  voiceSilentGain = null;
+
+  if (voiceAudioContext && voiceAudioContext.state !== 'closed') {
+    voiceAudioContext.close().catch(() => {});
+  }
+  voiceAudioContext = null;
+}
+
+function playRelayedVoice(fromId, rawPcm) {
+  if (!voiceEnabled || !voiceRelayActive || !voiceAudioContext) return;
+  if (!socialState || !socialState.party || !isPartyMember(fromId)) return;
+
+  const raw = socketAudioBuffer(rawPcm);
+  if (!raw || raw.byteLength < 2) return;
+
+  const pcm = new Int16Array(raw);
+  const audioBuffer = voiceAudioContext.createBuffer(1, pcm.length, VOICE_SAMPLE_RATE);
+  const samples = audioBuffer.getChannelData(0);
+  for (let i = 0; i < pcm.length; i += 1) samples[i] = pcm[i] / 32768;
+
+  const source = voiceAudioContext.createBufferSource();
+  source.buffer = audioBuffer;
+  source.connect(voiceAudioContext.destination);
+
+  let startAt = voicePlaybackCursors.get(fromId) || voiceAudioContext.currentTime + 0.06;
+  if (startAt < voiceAudioContext.currentTime || startAt > voiceAudioContext.currentTime + 0.45) {
+    startAt = voiceAudioContext.currentTime + 0.06;
+  }
+
+  source.start(startAt);
+  voicePlaybackCursors.set(fromId, startAt + audioBuffer.duration);
+}
+
 async function toggleVoice() {
   if (voiceEnabled) {
     stopVoice();
@@ -1714,10 +1844,10 @@ async function toggleVoice() {
     voiceEnabled = true;
     voiceReadyPeers.clear();
     document.querySelector('#voice-btn').classList.add('active');
-    toast('Speaking enabled. Waiting for party members to enable their microphone…');
 
+    await startVoiceRelay();
     socket.emit('voice:ready');
-    await syncVoicePeers();
+    toast('Party voice is on. Haven is relaying audio for reliable playback.');
     renderSocial();
   } catch (error) {
     console.warn('Microphone error', error);
@@ -1729,6 +1859,7 @@ function stopVoice() {
   voiceEnabled = false;
   voiceReadyPeers.clear();
   pendingIceCandidates.clear();
+  stopVoiceRelay();
 
   if (localStream) localStream.getTracks().forEach((track) => track.stop());
   localStream = null;
@@ -1949,6 +2080,10 @@ socket.on('voice:signal', async (payload) => {
   }
 });
 
+socket.on('voice:pcm', ({ fromId, pcm } = {}) => {
+  playRelayedVoice(fromId, pcm);
+});
+
 socket.on('world:init', (data) => {
   selfId = data.selfId;
   const mine = data.players.find((player) => player.id === selfId);
@@ -1977,7 +2112,7 @@ socket.on('player:update', (player) => {
   if (!remote) return;
 
   remote.data = player;
-  remote.mesh.userData.target.set(player.x, 0, player.z);
+  remote.mesh.userData.target.set(player.x, player.y || 0, player.z);
   remote.mesh.userData.targetRot = player.rot;
   remote.mesh.userData.moving = Boolean(player.moving);
 });
@@ -2319,7 +2454,7 @@ function frame(now) {
     if (now - lastNetworkSend > 50) {
       socket.volatile.emit('player:update', {
         x: me.position.x,
-        y: 0,
+        y: me.position.y,
         z: me.position.z,
         rot: me.rotation.y,
         moving: me.userData.moving,
