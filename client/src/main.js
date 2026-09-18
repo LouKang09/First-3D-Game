@@ -41,7 +41,7 @@ app.innerHTML = [
       '<div id="party-invite" class="invite glass hidden"><strong>Party invitation</strong><span id="invite-copy"></span><div><button id="join-party" class="small primary">Join</button><button id="dismiss-party" class="small">Not now</button></div></div>',
       '<div id="toasts"></div>',
       '<div id="mobile-controls">',
-        '<div id="joystick" class="joystick"><div id="stick"></div></div>',
+        '<div id="joystick" class="joystick" aria-label="Movement joystick"><span class="joystick-label">MOVE</span><div id="stick"></div></div>',
         '<div id="lookpad" class="lookpad"></div>',
         '<button id="mobile-e" class="mobile-e">E</button>',
       '</div>',
@@ -75,29 +75,66 @@ renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure = 1.05;
+renderer.toneMappingExposure = 1.12;
 worldEl.appendChild(renderer.domElement);
 
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(0xa8d8f0);
-scene.fog = new THREE.Fog(0xa8d8f0, 70, 165);
+scene.background = new THREE.Color(0xb7def3);
+scene.fog = new THREE.FogExp2(0xb7def3, 0.0082);
 
-const camera = new THREE.PerspectiveCamera(58, window.innerWidth / window.innerHeight, 0.1, 240);
+const camera = new THREE.PerspectiveCamera(58, window.innerWidth / window.innerHeight, 0.1, 260);
 const clock = new THREE.Clock();
 
-scene.add(new THREE.HemisphereLight(0xe9f7ff, 0x4b6249, 1.9));
-const sun = new THREE.DirectionalLight(0xffefd4, 3.1);
-sun.position.set(-35, 60, 30);
+scene.add(new THREE.HemisphereLight(0xf4fbff, 0x52684c, 2.15));
+const sun = new THREE.DirectionalLight(0xfff0d8, 3.35);
+sun.position.set(-42, 68, 34);
 sun.castShadow = true;
 sun.shadow.mapSize.set(2048, 2048);
-sun.shadow.camera.left = -90;
-sun.shadow.camera.right = 90;
-sun.shadow.camera.top = 90;
-sun.shadow.camera.bottom = -90;
+sun.shadow.camera.left = -92;
+sun.shadow.camera.right = 92;
+sun.shadow.camera.top = 92;
+sun.shadow.camera.bottom = -92;
+sun.shadow.bias = -0.00015;
 scene.add(sun);
 
 const world = new THREE.Group();
 scene.add(world);
+
+const sky = new THREE.Mesh(
+  new THREE.SphereGeometry(220, 32, 18),
+  new THREE.ShaderMaterial({
+    side: THREE.BackSide,
+    depthWrite: false,
+    uniforms: {
+      topColor: { value: new THREE.Color(0x72b6e8) },
+      horizonColor: { value: new THREE.Color(0xdaf0fb) },
+      sunColor: { value: new THREE.Color(0xffe8b6) }
+    },
+    vertexShader: `
+      varying vec3 vWorldPosition;
+      void main() {
+        vec4 worldPosition = modelMatrix * vec4(position, 1.0);
+        vWorldPosition = worldPosition.xyz;
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+      }
+    `,
+    fragmentShader: `
+      varying vec3 vWorldPosition;
+      uniform vec3 topColor;
+      uniform vec3 horizonColor;
+      uniform vec3 sunColor;
+      void main() {
+        float h = normalize(vWorldPosition).y;
+        float mixValue = smoothstep(-0.12, 0.72, h);
+        vec3 color = mix(horizonColor, topColor, mixValue);
+        float glow = pow(max(0.0, dot(normalize(vWorldPosition), normalize(vec3(-0.45, 0.55, 0.55)))), 12.0);
+        color = mix(color, sunColor, glow * 0.22);
+        gl_FragColor = vec4(color, 1.0);
+      }
+    `
+  })
+);
+scene.add(sky);
 
 function material(color, roughness = 0.9) {
   return new THREE.MeshStandardMaterial({ color, roughness });
@@ -124,9 +161,20 @@ cube(2.2, 0.14, 150, 0xd7d3ca, 10.2, 0.07, 0);
 cube(150, 0.14, 2.2, 0xd7d3ca, 0, 0.071, -10.2);
 cube(150, 0.14, 2.2, 0xd7d3ca, 0, 0.071, 10.2);
 
-const stripeMat = material(0xf5e9ba, 0.8);
+// Raised curbs visually separate walkable sidewalks from the road.
+cube(0.32, 0.28, 150, 0xb9b5ad, -9.05, 0.14, 0);
+cube(0.32, 0.28, 150, 0xb9b5ad, 9.05, 0.14, 0);
+cube(150, 0.28, 0.32, 0xb9b5ad, 0, 0.14, -9.05);
+cube(150, 0.28, 0.32, 0xb9b5ad, 0, 0.14, 9.05);
+
 for (let z = -68; z <= 68; z += 8) cube(0.24, 0.1, 3.2, 0xf5e9ba, 0, 0.1, z);
 for (let x = -68; x <= 68; x += 8) cube(3.2, 0.1, 0.24, 0xf5e9ba, x, 0.101, 0);
+
+// Crosswalks make the central intersection feel like a designed town center.
+for (let i = -3; i <= 3; i += 1) {
+  cube(1.1, 0.11, 4.6, 0xf5f4ef, i * 2.1, 0.12, -7.1);
+  cube(4.6, 0.11, 1.1, 0xf5f4ef, 7.1, 0.12, i * 2.1);
+}
 
 const homePositions = [
   [-43, -48], [-23, -48], [24, -48], [44, -48],
@@ -159,20 +207,58 @@ function makeTextSprite(text, fg = '#ffffff', bg = 'rgba(17,24,39,.82)') {
 function makeHouse(index, x, z) {
   const group = new THREE.Group();
   group.position.set(x, 0, z);
-  const palette = [0xf2c8ae, 0xc6d7ed, 0xdac7ed, 0xc8dfcb, 0xead6aa, 0xd7c6ba];
-  cube(12, 6.6, 9.5, palette[index % palette.length], 0, 3.3, 0, group);
-  const roof = new THREE.Mesh(new THREE.ConeGeometry(8.3, 4.4, 4), material(0x594943));
-  roof.position.y = 8.1;
+
+  const palette = [0xf3c8b1, 0xc7d9ed, 0xdcc9eb, 0xc7dfcb, 0xecd8aa, 0xd9c7ba];
+  const trim = 0xf7f4eb;
+  const roofColors = [0x654b43, 0x49566a, 0x5a4b6d, 0x4c5b4c];
+  const wallColor = palette[index % palette.length];
+
+  // Foundation, home volume and porch.
+  cube(12.8, 0.45, 10.3, 0xbab5ac, 0, 0.23, 0, group);
+  cube(12, 6.6, 9.5, wallColor, 0, 3.55, 0, group);
+  cube(6.8, 0.35, 4.1, 0xb7b1a8, 0, 0.2, 6.0, group);
+  cube(7.2, 0.25, 0.4, 0xf5f1e8, 0, 4.9, 5.05, group);
+
+  const roof = new THREE.Mesh(new THREE.ConeGeometry(8.3, 4.4, 4), material(roofColors[index % roofColors.length], 0.82));
+  roof.position.y = 8.35;
   roof.rotation.y = Math.PI / 4;
   roof.castShadow = true;
   group.add(roof);
-  cube(2.3, 4.1, 0.35, 0x6b4d3b, 0, 2.05, 4.9, group);
-  cube(2.3, 1.8, 0.25, 0xbde3f2, -3.6, 3.8, 4.94, group);
-  cube(2.3, 1.8, 0.25, 0xbde3f2, 3.6, 3.8, 4.94, group);
-  cube(5.8, 0.35, 3.5, 0xa8a29e, 0, 0.18, 6.1, group);
+
+  // Door, inset frame and porch awning.
+  cube(2.35, 4.15, 0.32, 0x704d39, 0, 2.28, 4.9, group);
+  cube(2.78, 0.22, 0.42, trim, 0, 4.43, 4.95, group);
+  cube(0.2, 4.45, 0.42, trim, -1.29, 2.3, 4.95, group);
+  cube(0.2, 4.45, 0.42, trim, 1.29, 2.3, 4.95, group);
+  cube(4.2, 0.24, 2.25, roofColors[index % roofColors.length], 0, 5.3, 5.55, group);
+  cube(0.18, 2.0, 0.18, 0xf5f1e8, -1.75, 4.35, 6.0, group);
+  cube(0.18, 2.0, 0.18, 0xf5f1e8, 1.75, 4.35, 6.0, group);
+
+  // Window glass + trim gives the facade depth.
+  [-3.65, 3.65].forEach((wx) => {
+    cube(2.65, 2.25, 0.22, trim, wx, 3.75, 4.93, group);
+    cube(2.25, 1.85, 0.25, 0x9fd9ec, wx, 3.75, 5.05, group);
+    cube(0.11, 1.85, 0.28, trim, wx, 3.75, 5.19, group);
+    cube(2.25, 0.11, 0.28, trim, wx, 3.75, 5.2, group);
+  });
+
+  // Chimney, hedges and a front path.
+  cube(1.1, 3.2, 1.1, 0x82675b, 3.5, 8.8, -1.6, group);
+  cube(2.8, 0.85, 1.0, 0x4f7d4d, -4.25, 0.55, 5.45, group);
+  cube(2.8, 0.85, 1.0, 0x4f7d4d, 4.25, 0.55, 5.45, group);
+  cube(2.1, 0.12, 5.2, 0xd4cec3, 0, 0.1, 9.4, group);
+
+  const porchLight = new THREE.Mesh(
+    new THREE.SphereGeometry(0.16, 10, 8),
+    new THREE.MeshStandardMaterial({ color: 0xfff1b8, emissive: 0xffc75d, emissiveIntensity: 1.3 })
+  );
+  porchLight.position.set(1.75, 4.15, 5.18);
+  group.add(porchLight);
+
   const sign = makeTextSprite('HOME ' + (index + 1), '#ffffff', 'rgba(32,37,47,.86)');
-  sign.position.set(0, 10.8, 0);
+  sign.position.set(0, 11.1, 0);
   group.add(sign);
+
   world.add(group);
   homeGroups[index] = group;
 }
@@ -202,6 +288,88 @@ function makeTree(x, z, scale = 1) {
   [-31, -65], [16, -28], [-16, 28]
 ].forEach((p, i) => makeTree(p[0], p[1], 0.9 + (i % 3) * 0.08));
 
+function makeShrub(x, z, scale = 1, color = 0x4e8a50) {
+  const shrub = new THREE.Mesh(new THREE.DodecahedronGeometry(0.85 * scale, 0), material(color, 1));
+  shrub.scale.y = 0.72;
+  shrub.position.set(x, 0.58 * scale, z);
+  shrub.castShadow = true;
+  world.add(shrub);
+}
+
+function makeLamp(x, z) {
+  const g = new THREE.Group();
+  const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.13, 4.5, 10), material(0x3f4853, 0.72));
+  pole.position.y = 2.25;
+  pole.castShadow = true;
+  g.add(pole);
+
+  const arm = cube(0.95, 0.1, 0.1, 0x3f4853, 0.38, 4.45, 0, g);
+  arm.castShadow = true;
+
+  const lamp = new THREE.Mesh(
+    new THREE.SphereGeometry(0.24, 12, 9),
+    new THREE.MeshStandardMaterial({ color: 0xffefbd, emissive: 0xffd36a, emissiveIntensity: 1.35 })
+  );
+  lamp.position.set(0.82, 4.28, 0);
+  g.add(lamp);
+  g.position.set(x, 0, z);
+  world.add(g);
+}
+
+function makeBench(x, z, rot = 0) {
+  const g = new THREE.Group();
+  cube(3.0, 0.2, 0.75, 0x8a6147, 0, 1.0, 0, g);
+  cube(3.0, 1.0, 0.18, 0x8a6147, 0, 1.55, -0.34, g);
+  cube(0.16, 1.05, 0.16, 0x404750, -1.1, 0.5, 0, g);
+  cube(0.16, 1.05, 0.16, 0x404750, 1.1, 0.5, 0, g);
+  g.position.set(x, 0, z);
+  g.rotation.y = rot;
+  world.add(g);
+}
+
+[
+  [-12, -36], [12, -36], [-12, 36], [12, 36],
+  [-36, -12], [-36, 12], [36, -12], [36, 12]
+].forEach((p) => makeLamp(p[0], p[1]));
+
+[
+  [-55, 2], [-52, 6], [-53, 10], [-18, 45], [-13, 45],
+  [17, -44], [22, -44], [57, 3], [55, 8], [41, 37]
+].forEach((p, i) => makeShrub(p[0], p[1], 0.85 + (i % 3) * 0.12, i % 4 === 0 ? 0x6b9250 : 0x4e8a50));
+
+makeBench(23, 19, 0.25);
+makeBench(38, 32, -1.15);
+makeBench(26, 41, Math.PI);
+makeBench(-14, 17, Math.PI / 2);
+
+// Distant low-poly town silhouettes add depth without expensive assets.
+for (let i = 0; i < 20; i += 1) {
+  const side = i % 4;
+  const offset = -72 + (i % 5) * 35;
+  const height = 9 + (i % 4) * 4;
+  if (side === 0) cube(16, height, 12, 0x8ca0a9, offset, height / 2, -88);
+  if (side === 1) cube(16, height, 12, 0x8a9aa3, offset, height / 2, 88);
+  if (side === 2) cube(12, height, 16, 0x93a2aa, -88, height / 2, offset);
+  if (side === 3) cube(12, height, 16, 0x879aa3, 88, height / 2, offset);
+}
+
+const clouds = [];
+function makeCloud(x, y, z, scale = 1) {
+  const g = new THREE.Group();
+  const cloudMat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.74, depthWrite: false });
+  [[0, 0, 0, 2.0], [2.1, 0.2, 0.1, 1.55], [-2.0, -0.05, 0.2, 1.45], [0.7, 0.65, 0, 1.6]].forEach((v) => {
+    const puff = new THREE.Mesh(new THREE.SphereGeometry(v[3] * scale, 14, 10), cloudMat);
+    puff.position.set(v[0] * scale, v[1] * scale, v[2] * scale);
+    g.add(puff);
+  });
+  g.position.set(x, y, z);
+  scene.add(g);
+  clouds.push(g);
+}
+makeCloud(-48, 34, -44, 1.5);
+makeCloud(22, 39, -68, 1.25);
+makeCloud(58, 31, 18, 1.1);
+
 const park = new THREE.Mesh(new THREE.CircleGeometry(16, 48), material(0x6ca86d));
 park.rotation.x = -Math.PI / 2;
 park.position.set(30, 0.08, 29);
@@ -222,44 +390,148 @@ fountainStem.position.set(30, 2.1, 29);
 fountainStem.castShadow = true;
 world.add(fountainStem);
 
+const parkPath = new THREE.Mesh(
+  new THREE.RingGeometry(10.6, 12.0, 64),
+  material(0xd6d0c5, 0.96)
+);
+parkPath.rotation.x = -Math.PI / 2;
+parkPath.position.set(30, 0.095, 29);
+parkPath.receiveShadow = true;
+world.add(parkPath);
+
+for (let i = 0; i < 12; i += 1) {
+  const a = (i / 12) * Math.PI * 2;
+  makeShrub(30 + Math.cos(a) * 14.0, 29 + Math.sin(a) * 14.0, 0.72, i % 3 === 0 ? 0x739d51 : 0x4f8650);
+}
+
 function createAvatar(data, local = false) {
   const g = new THREE.Group();
-  const bodyMat = material(data.color || '#7c3aed', 0.65);
-  const skinMat = material(0xf2c6a0, 0.75);
-  const darkMat = material(0x2c3441, 0.8);
+  const visual = new THREE.Group();
+  g.add(visual);
 
-  const torso = new THREE.Mesh(new THREE.CapsuleGeometry(0.72, 1.25, 5, 10), bodyMat);
-  torso.position.y = 2.05;
+  const shirtMat = material(data.color || '#7c3aed', 0.58);
+  const shirtDark = new THREE.MeshStandardMaterial({
+    color: new THREE.Color(data.color || '#7c3aed').multiplyScalar(0.72),
+    roughness: 0.68
+  });
+  const skinMat = material(0xf0bd95, 0.72);
+  const hairMat = material(0x2a2424, 0.82);
+  const pantsMat = material(0x263443, 0.78);
+  const shoeMat = material(0x171d25, 0.7);
+
+  // Rounded torso with a subtle waist gives the avatar a friendlier social-game silhouette.
+  const torso = new THREE.Mesh(new THREE.CapsuleGeometry(0.72, 1.18, 7, 12), shirtMat);
+  torso.position.y = 2.48;
+  torso.scale.set(1.06, 1.0, 0.82);
   torso.castShadow = true;
-  g.add(torso);
+  visual.add(torso);
 
-  const head = new THREE.Mesh(new THREE.SphereGeometry(0.62, 18, 14), skinMat);
-  head.position.y = 3.65;
+  const waist = new THREE.Mesh(new THREE.CylinderGeometry(0.58, 0.62, 0.48, 14), shirtDark);
+  waist.position.y = 1.6;
+  waist.castShadow = true;
+  visual.add(waist);
+
+  // Head, ears, hair and simple facial features.
+  const head = new THREE.Mesh(new THREE.SphereGeometry(0.61, 22, 16), skinMat);
+  head.position.y = 4.02;
   head.castShadow = true;
-  g.add(head);
+  visual.add(head);
 
-  const hair = new THREE.Mesh(new THREE.SphereGeometry(0.65, 16, 10, 0, Math.PI * 2, 0, Math.PI * 0.48), darkMat);
-  hair.position.y = 3.93;
+  [-0.59, 0.59].forEach((x) => {
+    const ear = new THREE.Mesh(new THREE.SphereGeometry(0.11, 10, 8), skinMat);
+    ear.position.set(x, 4.01, 0);
+    visual.add(ear);
+  });
+
+  const hair = new THREE.Mesh(new THREE.SphereGeometry(0.64, 20, 12, 0, Math.PI * 2, 0, Math.PI * 0.56), hairMat);
+  hair.position.set(0, 4.23, -0.04);
+  hair.scale.set(1.02, 0.82, 1.02);
   hair.castShadow = true;
-  g.add(hair);
+  visual.add(hair);
 
-  const legL = new THREE.Mesh(new THREE.CapsuleGeometry(0.22, 0.85, 3, 7), darkMat);
-  const legR = legL.clone();
-  legL.position.set(-0.3, 0.75, 0);
-  legR.position.set(0.3, 0.75, 0);
-  legL.castShadow = legR.castShadow = true;
-  g.add(legL, legR);
+  const fringe = new THREE.Mesh(new THREE.BoxGeometry(0.78, 0.18, 0.16), hairMat);
+  fringe.position.set(-0.11, 4.35, 0.51);
+  fringe.rotation.z = -0.16;
+  visual.add(fringe);
 
-  const name = makeTextSprite(data.name || 'Player');
-  name.position.y = 5.2;
-  name.scale.set(3.8, 0.95, 1);
+  const eyeMat = new THREE.MeshBasicMaterial({ color: 0x20242b });
+  [-0.22, 0.22].forEach((x) => {
+    const eye = new THREE.Mesh(new THREE.SphereGeometry(0.055, 9, 7), eyeMat);
+    eye.position.set(x, 4.08, 0.565);
+    eye.scale.z = 0.55;
+    visual.add(eye);
+  });
+
+  const mouth = new THREE.Mesh(new THREE.BoxGeometry(0.24, 0.035, 0.025), new THREE.MeshBasicMaterial({ color: 0x8f5f58 }));
+  mouth.position.set(0, 3.8, 0.6);
+  visual.add(mouth);
+
+  function makeArm(side) {
+    const pivot = new THREE.Group();
+    pivot.position.set(side * 0.86, 3.05, 0);
+    const upper = new THREE.Mesh(new THREE.CapsuleGeometry(0.19, 0.72, 4, 8), shirtMat);
+    upper.position.y = -0.48;
+    upper.castShadow = true;
+    pivot.add(upper);
+    const hand = new THREE.Mesh(new THREE.SphereGeometry(0.2, 10, 8), skinMat);
+    hand.position.y = -1.05;
+    hand.castShadow = true;
+    pivot.add(hand);
+    visual.add(pivot);
+    return pivot;
+  }
+
+  function makeLeg(side) {
+    const pivot = new THREE.Group();
+    pivot.position.set(side * 0.34, 1.52, 0);
+    const leg = new THREE.Mesh(new THREE.CapsuleGeometry(0.22, 0.78, 4, 8), pantsMat);
+    leg.position.y = -0.55;
+    leg.castShadow = true;
+    pivot.add(leg);
+    const shoe = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.28, 0.72), shoeMat);
+    shoe.position.set(0, -1.08, 0.12);
+    shoe.castShadow = true;
+    pivot.add(shoe);
+    visual.add(pivot);
+    return pivot;
+  }
+
+  const armL = makeArm(-1);
+  const armR = makeArm(1);
+  const legL = makeLeg(-1);
+  const legR = makeLeg(1);
+
+  // Ground contact ring makes the local avatar immediately readable.
+  const groundRing = new THREE.Mesh(
+    new THREE.RingGeometry(local ? 0.72 : 0.58, local ? 0.9 : 0.72, 32),
+    new THREE.MeshBasicMaterial({
+      color: local ? 0xffffff : new THREE.Color(data.color || '#7c3aed'),
+      transparent: true,
+      opacity: local ? 0.62 : 0.18,
+      side: THREE.DoubleSide,
+      depthWrite: false
+    })
+  );
+  groundRing.rotation.x = -Math.PI / 2;
+  groundRing.position.y = 0.03;
+  g.add(groundRing);
+
+  const name = makeTextSprite(data.name || 'Player', '#ffffff', local ? 'rgba(79,70,229,.9)' : 'rgba(17,24,39,.82)');
+  name.position.y = 5.35;
+  name.scale.set(3.9, 0.97, 1);
   g.add(name);
 
   g.position.set(data.x || 0, 0, data.z || 0);
   g.rotation.y = data.rot || Math.PI;
   g.userData = {
+    visual,
+    torso,
+    head,
+    armL,
+    armR,
     legL,
     legR,
+    groundRing,
     moving: false,
     target: new THREE.Vector3(data.x || 0, 0, data.z || 0),
     targetRot: data.rot || Math.PI,
@@ -305,8 +577,10 @@ function updateLocal(delta) {
     const sin = Math.sin(cameraYaw);
     const cos = Math.cos(cameraYaw);
 
-    const dx = (strafe * cos + forward * sin) * speed * delta;
-    const dz = (forward * cos - strafe * sin) * speed * delta;
+    // CameraYaw describes the camera's offset from the player, so movement must
+    // use the opposite vector for screen-forward and a perpendicular vector for right.
+    const dx = (-forward * sin - strafe * cos) * speed * delta;
+    const dz = (-forward * cos + strafe * sin) * speed * delta;
 
     me.position.x = THREE.MathUtils.clamp(me.position.x + dx, -82, 82);
     me.position.z = THREE.MathUtils.clamp(me.position.z + dz, -82, 82);
@@ -320,12 +594,31 @@ function updateLocal(delta) {
 
 function updateAvatarAnimation(group, time, delta) {
   const moving = group.userData.moving;
-  const amp = moving ? 0.55 : 0.04;
-  const speed = moving ? 9 : 2;
-  group.userData.legL.rotation.x = Math.sin(time * speed) * amp;
-  group.userData.legR.rotation.x = -Math.sin(time * speed) * amp;
-  const base = moving ? Math.abs(Math.sin(time * speed * 2)) * 0.04 : 0;
-  group.position.y = THREE.MathUtils.lerp(group.position.y, base, Math.min(1, delta * 12));
+  const speed = moving ? 9.2 : 1.8;
+  const stride = Math.sin(time * speed);
+  const legAmp = moving ? 0.62 : 0.025;
+  const armAmp = moving ? 0.5 : 0.035;
+
+  group.userData.legL.rotation.x = stride * legAmp;
+  group.userData.legR.rotation.x = -stride * legAmp;
+  group.userData.armL.rotation.x = -stride * armAmp;
+  group.userData.armR.rotation.x = stride * armAmp;
+
+  const bob = moving ? Math.abs(Math.sin(time * speed * 2)) * 0.055 : Math.sin(time * 1.8) * 0.012;
+  group.position.y = THREE.MathUtils.lerp(group.position.y, bob, Math.min(1, delta * 12));
+
+  group.userData.visual.rotation.z = THREE.MathUtils.lerp(
+    group.userData.visual.rotation.z,
+    moving ? -stride * 0.025 : Math.sin(time * 1.1) * 0.008,
+    Math.min(1, delta * 8)
+  );
+  group.userData.torso.rotation.x = THREE.MathUtils.lerp(
+    group.userData.torso.rotation.x,
+    moving ? 0.045 : 0,
+    Math.min(1, delta * 8)
+  );
+  group.userData.head.rotation.y = Math.sin(time * 0.8 + (group.userData.local ? 0 : group.id || 0)) * 0.035;
+  group.userData.groundRing.rotation.z += delta * (group.userData.local ? 0.55 : 0.18);
 }
 
 function updateCamera(delta) {
@@ -1026,6 +1319,10 @@ function frame(now) {
   }
 
   fountainWater.position.y = 0.88 + Math.sin(time * 2.2) * 0.03;
+  clouds.forEach((cloud, index) => {
+    cloud.position.x += delta * (0.32 + index * 0.05);
+    if (cloud.position.x > 105) cloud.position.x = -105;
+  });
   renderer.render(scene, camera);
 }
 
