@@ -17,7 +17,7 @@ app.use((req, res, next) => {
 const httpServer = createServer(app);
 const io = new Server(httpServer, {
   cors: { origin: true },
-  maxHttpBufferSize: 100000
+  maxHttpBufferSize: 200000
 });
 
 const players = new Map();
@@ -373,6 +373,26 @@ io.on('connection', (socket) => {
     ) return;
 
     io.to(payload.targetId).emit('voice:ready:ack', { fromId: socket.id });
+  });
+
+  socket.on('voice:pcm', (pcm) => {
+    const player = players.get(socket.id);
+    if (!player || !player.partyId) return;
+
+    const party = parties.get(player.partyId);
+    if (!party) return;
+
+    const byteLength = pcm && (pcm.byteLength || pcm.length || 0);
+    if (!byteLength || byteLength > 24000) return;
+
+    for (const memberId of party.members) {
+      if (memberId !== socket.id) {
+        io.to(memberId).volatile.emit('voice:pcm', {
+          fromId: socket.id,
+          pcm
+        });
+      }
+    }
   });
 
   socket.on('voice:signal', (payload = {}) => {
