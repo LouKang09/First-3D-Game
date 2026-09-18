@@ -45,7 +45,7 @@ app.innerHTML = [
           '<button id="voice-btn" class="round glass voice-control" title="Join a party to enable speaking" disabled>🎙</button>',
         '</div>',
       '</div>',
-      '<div id="status" class="status glass"><strong id="status-name">Guest</strong><span id="status-home">Home #1</span><div class="keys"><kbd>WASD</kbd> move <kbd>Shift</kbd> sprint <kbd>Space</kbd> jump <kbd>Click</kbd> player <kbd>E</kbd> interact</div></div>',
+      '<div id="status" class="status glass"><strong id="status-name">Guest</strong><span id="status-home">Home #1</span><div class="keys"><kbd>WASD</kbd> move <kbd>Shift</kbd> sprint <kbd>Space</kbd> jump <kbd>E</kbd> interact <kbd>R</kbd> punch</div></div>',
       '<div id="prompt" class="house-prompt glass">',
         '<div class="house-prompt-icon">⌂</div>',
         '<div class="house-prompt-copy"><small id="house-kicker">NEARBY HOME</small><strong id="prompt-text">Interact</strong><span id="house-distance"></span></div>',
@@ -1035,12 +1035,16 @@ function createAvatar(data, local = false) {
 
   root.position.set(data.x || 0, data.y || 0, data.z || 0);
   root.rotation.y = data.rot || Math.PI;
+  root.scale.setScalar(0.74);
   root.userData = {
     playerId: data.id || null,
     visual, torso, head, armL, armR, legL, legR, groundRing: ring,
     moving: false,
     sprinting: false,
     seated: false,
+    punchStartedAt: 0,
+    punchUntil: 0,
+    hitUntil: 0,
     grounded: (data.y || 0) <= 0.001,
     verticalVelocity: 0,
     target: new THREE.Vector3(data.x || 0, data.y || 0, data.z || 0),
@@ -1077,34 +1081,103 @@ function makeNpcWalker(index, route, runner = false) {
 
   mesh.userData.groundRing.visible = false;
   npcActors.push({
+    id: 'npc-' + index,
+    name: names[index % names.length],
     mesh,
     route,
     segment: index % route.length,
     progress: (index * .19) % 1,
     speed: runner ? 4.0 + (index % 2) * .35 : 1.75 + (index % 3) * .16,
-    runner
+    runner,
+    pauseUntil: 0
   });
 }
 
 function makeNpcCar(index, axis, lane, direction) {
   const g = new THREE.Group();
   const colors = [0xd85f5f, 0x5c80c7, 0xe0a84f, 0x5fa078, 0x8c6cc0, 0xd7d9dc];
-  cube(3.6, .75, 6.2, colors[index % colors.length], 0, .78, 0, g);
-  cube(3.0, .85, 3.0, 0xc8e2ee, 0, 1.48, -.35, g);
-  cube(2.7, .08, 1.5, 0x4d5d6b, 0, 1.78, -.4, g);
-
-  [[-1.45,-1.9],[1.45,-1.9],[-1.45,1.9],[1.45,1.9]].forEach(([x,z]) => {
-    const wheel = new THREE.Mesh(new THREE.CylinderGeometry(.46, .46, .32, 12), material(0x252a31,.9));
-    wheel.rotation.z = Math.PI / 2;
-    wheel.position.set(x,.48,z);
-    g.add(wheel);
+  const bodyColor = colors[index % colors.length];
+  const glassMat = new THREE.MeshStandardMaterial({
+    color: 0x8fc1d7,
+    roughness: .18,
+    metalness: .08,
+    transparent: true,
+    opacity: .88
   });
 
-  const driverHead = new THREE.Mesh(new THREE.SphereGeometry(.32, 14, 10), material(0xefbd9b,.7));
-  driverHead.position.set(-.6, 2.04, .25);
+  // Stylized compact sedan: lower chassis, sculpted hood/trunk and raised cabin.
+  cube(3.55, .58, 5.8, bodyColor, 0, .68, 0, g);
+  cube(3.35, .42, 1.75, bodyColor, 0, 1.02, 2.02, g);
+  cube(3.35, .36, 1.45, bodyColor, 0, .98, -2.12, g);
+  cube(2.95, 1.05, 2.7, bodyColor, 0, 1.47, -.22, g);
+
+  const windshield = new THREE.Mesh(new THREE.BoxGeometry(2.5, .72, .08), glassMat);
+  windshield.position.set(0, 1.72, 1.12);
+  windshield.rotation.x = -.4;
+  g.add(windshield);
+
+  const rearWindow = new THREE.Mesh(new THREE.BoxGeometry(2.45, .68, .08), glassMat);
+  rearWindow.position.set(0, 1.68, -1.42);
+  rearWindow.rotation.x = .4;
+  g.add(rearWindow);
+
+  [-1, 1].forEach((side) => {
+    const sideGlass = new THREE.Mesh(new THREE.BoxGeometry(.07, .72, 1.45), glassMat);
+    sideGlass.position.set(side * 1.48, 1.62, -.16);
+    g.add(sideGlass);
+
+    const mirror = cube(.28, .18, .42, bodyColor, side * 1.88, 1.35, .75, g);
+    mirror.castShadow = true;
+  });
+
+  // Bumpers, grille and lights.
+  cube(3.2, .2, .24, 0x343b45, 0, .62, 3.0, g);
+  cube(3.2, .18, .22, 0x343b45, 0, .62, -3.0, g);
+  cube(1.35, .24, .08, 0x20252c, 0, .82, 3.14, g);
+
+  [-1.12, 1.12].forEach((x) => {
+    const headlight = new THREE.Mesh(
+      new THREE.BoxGeometry(.52, .26, .1),
+      new THREE.MeshStandardMaterial({ color: 0xfff2b8, emissive: 0xffd76a, emissiveIntensity: 1.35 })
+    );
+    headlight.position.set(x, .9, 3.13);
+    g.add(headlight);
+  });
+
+  const brakeMaterial = new THREE.MeshStandardMaterial({
+    color: 0x9f2525,
+    emissive: 0x4b0909,
+    emissiveIntensity: .55,
+    roughness: .55
+  });
+  [-1.12, 1.12].forEach((x) => {
+    const tail = new THREE.Mesh(new THREE.BoxGeometry(.5, .25, .1), brakeMaterial);
+    tail.position.set(x, .88, -3.13);
+    g.add(tail);
+  });
+
+  const wheels = [];
+  [[-1.58,-1.95],[1.58,-1.95],[-1.58,1.95],[1.58,1.95]].forEach(([x,z]) => {
+    const wheel = new THREE.Mesh(
+      new THREE.CylinderGeometry(.48, .48, .34, 16),
+      material(0x24282f,.92)
+    );
+    wheel.rotation.z = Math.PI / 2;
+    wheel.position.set(x,.48,z);
+    wheel.castShadow = true;
+    g.add(wheel);
+    wheels.push(wheel);
+  });
+
+  // Visible driver.
+  const driverHead = new THREE.Mesh(new THREE.SphereGeometry(.28, 14, 10), material(0xefbd9b,.7));
+  driverHead.position.set(-.62, 1.86, .02);
   g.add(driverHead);
-  const driverTorso = new THREE.Mesh(new THREE.BoxGeometry(.65,.7,.5), material(index % 2 ? 0x4b6a8d : 0x885b7e,.7));
-  driverTorso.position.set(-.6,1.58,.22);
+  const driverTorso = new THREE.Mesh(
+    new THREE.BoxGeometry(.62,.66,.48),
+    material(index % 2 ? 0x4b6a8d : 0x885b7e,.7)
+  );
+  driverTorso.position.set(-.62,1.45,-.02);
   g.add(driverTorso);
 
   if (axis === 'x') {
@@ -1116,7 +1189,17 @@ function makeNpcCar(index, axis, lane, direction) {
   }
 
   scene.add(g);
-  npcCars.push({ mesh: g, axis, lane, direction, speed: 8 + (index % 3) * 1.4 });
+  const speed = 8 + (index % 3) * 1.4;
+  npcCars.push({
+    mesh: g,
+    axis,
+    lane,
+    direction,
+    speed,
+    currentSpeed: speed,
+    wheels,
+    brakeMaterial
+  });
 }
 
 function initNpcLife() {
@@ -1139,10 +1222,138 @@ function initNpcLife() {
 }
 initNpcLife();
 
+function trafficCharacters() {
+  const characters = [];
+
+  if (me && !insideHouse) characters.push(me.position);
+  remotePlayers.forEach((remote) => {
+    if (remote.mesh.visible) characters.push(remote.mesh.position);
+  });
+  npcActors.forEach((npc) => {
+    if (npc.mesh.visible) characters.push(npc.mesh.position);
+  });
+
+  return characters;
+}
+
+function carShouldBrake(car) {
+  const cx = car.mesh.position.x;
+  const cz = car.mesh.position.z;
+
+  return trafficCharacters().some((p) => {
+    if (car.axis === 'x') {
+      const ahead = (p.x - cx) * car.direction;
+      const lateral = Math.abs(p.z - car.lane);
+      return ahead > 0 && ahead < 7.6 && lateral < 2.15;
+    }
+
+    const ahead = (p.z - cz) * car.direction;
+    const lateral = Math.abs(p.x - car.lane);
+    return ahead > 0 && ahead < 7.6 && lateral < 2.15;
+  });
+}
+
+const NPC_PLEASANTRIES = [
+  'Hey there! Beautiful day in Haven.',
+  'Hi! Hope your day is going well.',
+  'Hello! Nice to see someone around.',
+  'Hey! Enjoying the neighborhood?',
+  'Hi there! Take care out here.',
+  'Good to see you! The town feels lively today.',
+  'Hello! I was just out for a walk.',
+  'Hey! Have a great time in Haven.'
+];
+
+function nearestNpc(maxDistance = 3.25) {
+  if (!me || insideHouse) return null;
+  let best = null;
+
+  npcActors.forEach((npc) => {
+    const d = Math.hypot(me.position.x - npc.mesh.position.x, me.position.z - npc.mesh.position.z);
+    if (d < maxDistance && (!best || d < best.distance)) {
+      best = { type: 'npc', npc, distance: d };
+    }
+  });
+
+  return best;
+}
+
+function greetNpc(npc) {
+  if (!npc || !me) return;
+  npc.pauseUntil = performance.now() + 1800;
+  npc.mesh.userData.moving = false;
+  npc.mesh.userData.sprinting = false;
+  npc.mesh.rotation.y = Math.atan2(
+    me.position.x - npc.mesh.position.x,
+    me.position.z - npc.mesh.position.z
+  );
+  const greeting = NPC_PLEASANTRIES[Math.floor(Math.random() * NPC_PLEASANTRIES.length)];
+  toast(npc.name + ': “' + greeting + '”');
+}
+
+function startPunchAnimation(group) {
+  if (!group) return;
+  const now = performance.now();
+  group.userData.punchStartedAt = now;
+  group.userData.punchUntil = now + 360;
+}
+
+function startHitReaction(group) {
+  if (!group) return;
+  group.userData.hitUntil = performance.now() + 320;
+}
+
+function nearestPunchTarget(maxDistance = 2.7) {
+  if (!me || insideHouse || me.userData.seated) return null;
+  const forwardX = Math.sin(me.rotation.y);
+  const forwardZ = Math.cos(me.rotation.y);
+  let best = null;
+
+  const consider = (type, id, mesh, extra = null) => {
+    const dx = mesh.position.x - me.position.x;
+    const dz = mesh.position.z - me.position.z;
+    const d = Math.hypot(dx, dz);
+    if (d <= .01 || d > maxDistance) return;
+    const dot = (dx / d) * forwardX + (dz / d) * forwardZ;
+    if (dot < .15) return;
+    if (!best || d < best.distance) best = { type, id, mesh, extra, distance: d };
+  };
+
+  remotePlayers.forEach((remote, id) => consider('player', id, remote.mesh));
+  npcActors.forEach((npc) => consider('npc', npc.id, npc.mesh, npc));
+
+  return best;
+}
+
+function punchNearest() {
+  if (!me || transitioningHouse || insideHouse || me.userData.seated) return;
+  startPunchAnimation(me);
+
+  const target = nearestPunchTarget();
+  if (!target) return;
+
+  if (target.type === 'npc') {
+    startHitReaction(target.mesh);
+    target.extra.pauseUntil = performance.now() + 900;
+    const reactions = ['Hey!', 'Whoa!', 'Watch it!', 'Easy there!'];
+    toast(target.extra.name + ': “' + reactions[Math.floor(Math.random() * reactions.length)] + '”');
+    return;
+  }
+
+  socket.emit('combat:punch', target.id);
+}
+
 function updateNpcLife(delta, time) {
   if (insideHouse) return;
 
   npcActors.forEach((npc) => {
+    if (npc.pauseUntil > performance.now()) {
+      npc.mesh.userData.moving = false;
+      npc.mesh.userData.sprinting = false;
+      updateAvatarAnimation(npc.mesh, time, delta);
+      return;
+    }
+
     const route = npc.route;
     const a = route[npc.segment % route.length];
     const b = route[(npc.segment + 1) % route.length];
@@ -1167,12 +1378,26 @@ function updateNpcLife(delta, time) {
   });
 
   npcCars.forEach((car) => {
+    const braking = carShouldBrake(car);
+    const targetSpeed = braking ? 0 : car.speed;
+    car.currentSpeed = THREE.MathUtils.lerp(
+      car.currentSpeed,
+      targetSpeed,
+      Math.min(1, delta * (braking ? 7.5 : 2.6))
+    );
+
+    car.brakeMaterial.emissiveIntensity = braking ? 2.2 : .55;
+
+    car.wheels.forEach((wheel) => {
+      wheel.rotation.x -= car.currentSpeed * delta * .85;
+    });
+
     if (car.axis === 'x') {
-      car.mesh.position.x += car.direction * car.speed * delta;
+      car.mesh.position.x += car.direction * car.currentSpeed * delta;
       if (car.mesh.position.x > 88) car.mesh.position.x = -88;
       if (car.mesh.position.x < -88) car.mesh.position.x = 88;
     } else {
-      car.mesh.position.z += car.direction * car.speed * delta;
+      car.mesh.position.z += car.direction * car.currentSpeed * delta;
       if (car.mesh.position.z > 88) car.mesh.position.z = -88;
       if (car.mesh.position.z < -88) car.mesh.position.z = 88;
     }
@@ -1275,6 +1500,19 @@ function updateAvatarAnimation(group, time, delta) {
   group.userData.armL.rotation.x = -stride * armAmp;
   group.userData.armR.rotation.x = stride * armAmp;
 
+  const nowMs = performance.now();
+  if (group.userData.punchUntil > nowMs) {
+    const total = Math.max(1, group.userData.punchUntil - group.userData.punchStartedAt);
+    const progress = THREE.MathUtils.clamp((nowMs - group.userData.punchStartedAt) / total, 0, 1);
+    const swing = Math.sin(progress * Math.PI);
+    group.userData.armR.rotation.x = -1.75 * swing;
+    group.userData.armR.rotation.z = -.34 * swing;
+    group.userData.torso.rotation.y = -.18 * swing;
+  } else {
+    group.userData.armR.rotation.z = THREE.MathUtils.lerp(group.userData.armR.rotation.z, 0, Math.min(1, delta * 12));
+    group.userData.torso.rotation.y = THREE.MathUtils.lerp(group.userData.torso.rotation.y, 0, Math.min(1, delta * 12));
+  }
+
   const bob = moving
     ? Math.abs(Math.sin(time * speed * 2)) * (sprinting ? .075 : .045)
     : Math.sin(time * 1.6) * .008;
@@ -1284,9 +1522,10 @@ function updateAvatarAnimation(group, time, delta) {
     Math.min(1, delta * 13)
   );
 
+  const hitLean = group.userData.hitUntil > performance.now() ? .22 : 0;
   group.userData.visual.rotation.z = THREE.MathUtils.lerp(
     group.userData.visual.rotation.z,
-    moving ? -stride * (sprinting ? .035 : .02) : Math.sin(time * 1.05) * .006,
+    hitLean || (moving ? -stride * (sprinting ? .035 : .02) : Math.sin(time * 1.05) * .006),
     Math.min(1, delta * 8)
   );
 
@@ -1302,7 +1541,7 @@ function updateAvatarAnimation(group, time, delta) {
 
 function updateCamera(delta) {
   if (!me) return;
-  const target = me.position.clone().add(new THREE.Vector3(0, cameraDistance > 18 ? 3.7 : 2.7, 0));
+  const target = me.position.clone().add(new THREE.Vector3(0, cameraDistance > 18 ? 3.2 : 2.25, 0));
   const cp = Math.cos(cameraPitch);
   const offset = new THREE.Vector3(
     Math.sin(cameraYaw) * cp,
@@ -1368,10 +1607,14 @@ function nearestInteractable() {
     return { type: 'bench-exit', bench: seatedBench, distance: 0 };
   }
 
+  const npc = nearestNpc();
   const house = nearestHouse();
   const bench = nearestBench();
-  if (bench && (!house || bench.distance <= house.distance)) return bench;
-  return house;
+
+  let best = npc;
+  if (bench && (!best || bench.distance < best.distance)) best = bench;
+  if (house && (!best || house.distance < best.distance)) best = house;
+  return best;
 }
 
 function setExteriorVisibility(visible) {
@@ -1497,7 +1740,8 @@ function interactNearest() {
   const target = nearestInteractable();
   if (!target) return;
 
-  if (target.type === 'house') visitHouse(target.homeId);
+  if (target.type === 'npc') greetNpc(target.npc);
+  else if (target.type === 'house') visitHouse(target.homeId);
   else if (target.type === 'bench') sitOnBench(target.bench);
   else if (target.type === 'bench-exit') standFromBench();
   else if (target.type === 'exit') leaveHouse();
@@ -1517,6 +1761,11 @@ document.addEventListener('keydown', (event) => {
   keys.add(event.code);
   if (event.code === 'KeyE' && !event.repeat) {
     interactNearest();
+  }
+
+  if (event.code === 'KeyR' && !event.repeat) {
+    event.preventDefault();
+    punchNearest();
   }
 });
 
@@ -2511,6 +2760,19 @@ socket.on('player:update', (player) => {
   remote.mesh.userData.moving = Boolean(player.moving);
 });
 
+socket.on('combat:punch', ({ attackerId, targetId } = {}) => {
+  const attacker = attackerId === selfId ? me : remotePlayers.get(attackerId)?.mesh;
+  const target = targetId === selfId ? me : remotePlayers.get(targetId)?.mesh;
+
+  if (attacker) startPunchAnimation(attacker);
+  if (target) startHitReaction(target);
+
+  if (targetId === selfId) {
+    const attackerData = playerById(attackerId);
+    toast((attackerData ? attackerData.name : 'Someone') + ' punched you.');
+  }
+});
+
 socket.on('player:left', (id) => {
   if (selectedPlayerId === id) hidePlayerPopup();
   const remote = remotePlayers.get(id);
@@ -2805,7 +3067,11 @@ function updatePrompt() {
   let kicker = 'NEARBY';
   let detail = 'Press E';
 
-  if (nearest.type === 'bench') {
+  if (nearest.type === 'npc') {
+    kicker = 'NEIGHBOR';
+    title = 'Talk to ' + nearest.npc.name;
+    detail = Math.max(1, Math.round(nearest.distance)) + 'm away · Press E';
+  } else if (nearest.type === 'bench') {
     kicker = 'PUBLIC SEAT';
     title = 'Sit down';
     detail = Math.max(1, Math.round(nearest.distance)) + 'm away · Press E';
