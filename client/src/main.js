@@ -1215,6 +1215,7 @@ function makeNpcWalker(index, route, runner = false) {
   npcActors.push({
     id: 'npc-' + index,
     name: names[index % names.length],
+    gender: index % 2 ? 'male' : 'female',
     mesh,
     route,
     routeTemplate: route.map((point) => [point[0], point[1]]),
@@ -1437,21 +1438,219 @@ function trafficCharacters() {
   return characters;
 }
 
-function carShouldBrake(car) {
+function pointAheadOfCar(car, point, forwardDistance = 9.5, lateralDistance = 2.8, direction = car.direction) {
   const cx = car.mesh.position.x;
   const cz = car.mesh.position.z;
 
-  return trafficCharacters().some((p) => {
-    if (car.axis === 'x') {
-      const ahead = (p.x - cx) * car.direction;
-      const lateral = Math.abs(p.z - car.lane);
-      return ahead > 0 && ahead < 7.6 && lateral < 2.15;
+  if (car.axis === 'x') {
+    const ahead = (point.x - cx) * direction;
+    const lateral = Math.abs(point.z - car.lane);
+    return ahead > 0 && ahead < forwardDistance && lateral < lateralDistance;
+  }
+
+  const ahead = (point.z - cz) * direction;
+  const lateral = Math.abs(point.x - car.lane);
+  return ahead > 0 && ahead < forwardDistance && lateral < lateralDistance;
+}
+
+function carRoadBlocked(car, direction = car.direction) {
+  if (trafficCharacters().some((p) => pointAheadOfCar(car, p, 9.5, 2.8, direction))) {
+    return true;
+  }
+
+  return npcCars.some((other) => {
+    if (other === car || !other.mesh.visible) return false;
+
+    const dx = other.mesh.position.x - car.mesh.position.x;
+    const dz = other.mesh.position.z - car.mesh.position.z;
+    const distance = Math.hypot(dx, dz);
+
+    // Close cars at intersections get priority spacing regardless of axis.
+    if (distance < 5.8) {
+      const forwardX = car.axis === 'x' ? direction : 0;
+      const forwardZ = car.axis === 'z' ? direction : 0;
+      const dot = dx * forwardX + dz * forwardZ;
+      if (dot > 0) return true;
     }
 
-    const ahead = (p.z - cz) * car.direction;
-    const lateral = Math.abs(p.x - car.lane);
-    return ahead > 0 && ahead < 7.6 && lateral < 2.15;
+    if (car.axis === other.axis) {
+      return pointAheadOfCar(car, other.mesh.position, 11.5, 3.3, direction);
+    }
+
+    return false;
   });
+}
+
+function carShouldBrake(car) {
+  return carRoadBlocked(car, car.direction);
+}
+
+function reverseCarDirection(car) {
+  car.direction *= -1;
+  car.mesh.rotation.y += Math.PI;
+  car.currentSpeed = 0;
+  car.blockedSince = 0;
+  car.hornCount = 0;
+  car.pendingReverse = false;
+}
+
+let gameAudioContext = null;
+let musicMaster = null;
+let musicInterval = null;
+let musicEnabled = true;
+let ambientStep = 0;
+
+function ensureGameAudio() {
+  const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+  if (!AudioContextClass) return null;
+
+  if (!gameAudioContext || gameAudioContext.state === 'closed') {
+    gameAudioContext = new AudioContextClass({ latencyHint: 'interactive' });
+  }
+  if (gameAudioContext.state === 'suspended') gameAudioContext.resume().catch(() => {});
+  return gameAudioContext;
+}
+
+function playAmbientChord() {
+  const ctx = ensureGameAudio();
+  if (!ctx || !musicEnabled) return;
+
+  if (!musicMaster) {
+    musicMaster = ctx.createGain();
+    musicMaster.gain.value = .026;
+    musicMaster.connect(ctx.destination);
+  }
+
+  const chords = [
+    [196.00, 246.94, 293.66],
+    [174.61, 220.00, 261.63],
+    [146.83, 196.00, 246.94],
+    [164.81, 207.65, 261.63]
+  ];
+  const notes = chords[ambientStep % chords.length];
+  ambientStep += 1;
+
+  const now = ctx.currentTime;
+  notes.forEach((frequency, index) => {
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    const filter = ctx.createBiquadFilter();
+
+    osc.type = index === 1 ? 'triangle' : 'sine';
+    osc.frequency.value = frequency / 2;
+    filter.type = 'lowpass';
+    filter.frequency.value = 780;
+
+    gain.gain.setValueAtTime(0.0001, now);
+    gain.gain.exponentialRampToValueAtTime(.018 / notes.length, now + 1.4);
+    gain.gain.setValueAtTime(.018 / notes.length, now + 4.2);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + 6.4);
+
+    osc.connect(filter);
+    filter.connect(gain);
+    gain.connect(musicMaster);
+    osc.start(now);
+    osc.stop(now + 6.5);
+  });
+}
+
+function startAmbientMusic() {
+  ensureGameAudio();
+  if (!musicEnabled) return;
+  if (!musicInterval) {
+    playAmbientChord();
+    musicInterval = window.setInterval(playAmbientChord, 5600);
+  }
+}
+
+function setMusicEnabled(enabled) {
+  musicEnabled = enabled;
+  const button = document.querySelector('#music-btn');
+  if (button) button.classList.toggle('active', musicEnabled);
+
+  if (musicEnabled) {
+    startAmbientMusic();
+  } else {
+    if (musicInterval) window.clearInterval(musicInterval);
+    musicInterval = null;
+    if (musicMaster && gameAudioContext) {
+      musicMaster.gain.setTargetAtTime(.0001, gameAudioContext.currentTime, .08);
+    }
+  }
+}
+
+function playCarHorn(car) {
+  const ctx = ensureGameAudio();
+  if (!ctx) return;
+  const now = ctx.currentTime;
+
+  const pan = ctx.createStereoPanner ? ctx.createStereoPanner() : null;
+  if (pan && me) {
+    pan.pan.value = THREE.MathUtils.clamp((car.mesh.position.x - me.position.x) / 30, -1, 1);
+  }
+
+  const output = ctx.createGain();
+  output.gain.setValueAtTime(.0001, now);
+  output.gain.exponentialRampToValueAtTime(.045, now + .025);
+  output.gain.exponentialRampToValueAtTime(.0001, now + .24);
+
+  if (pan) {
+    output.connect(pan);
+    pan.connect(ctx.destination);
+  } else {
+    output.connect(ctx.destination);
+  }
+
+  [392, 493.88].forEach((frequency) => {
+    const osc = ctx.createOscillator();
+    osc.type = 'triangle';
+    osc.frequency.value = frequency;
+    osc.connect(output);
+    osc.start(now);
+    osc.stop(now + .25);
+  });
+}
+
+function bestSpeechVoice(gender = 'female') {
+  if (!('speechSynthesis' in window)) return null;
+  const voices = window.speechSynthesis.getVoices();
+  if (!voices.length) return null;
+
+  const preferred = gender === 'male'
+    ? /Guy|Daniel|David|Alex|Ryan|Google UK English Male|Microsoft.*Male/i
+    : /Ava|Aria|Jenny|Samantha|Karen|Moira|Tessa|Google US English|Microsoft.*Female/i;
+
+  return (
+    voices.find((voice) => /^en(-|_)/i.test(voice.lang) && preferred.test(voice.name)) ||
+    voices.find((voice) => /^en(-|_)/i.test(voice.lang) && /Natural|Neural|Premium|Enhanced/i.test(voice.name)) ||
+    voices.find((voice) => /^en(-|_)/i.test(voice.lang)) ||
+    voices[0]
+  );
+}
+
+function speakNpcGreeting(text, gender) {
+  if (!('speechSynthesis' in window) || !text) return;
+
+  window.speechSynthesis.cancel();
+  const utterance = new SpeechSynthesisUtterance(text);
+  const voice = bestSpeechVoice(gender);
+  if (voice) utterance.voice = voice;
+  utterance.lang = voice?.lang || 'en-US';
+  utterance.rate = .96;
+  utterance.pitch = gender === 'male' ? .93 : 1.03;
+  utterance.volume = .8;
+
+  const ctx = gameAudioContext;
+  if (ctx && musicMaster) {
+    musicMaster.gain.setTargetAtTime(.012, ctx.currentTime, .08);
+    utterance.onend = () => {
+      if (musicEnabled && gameAudioContext && musicMaster) {
+        musicMaster.gain.setTargetAtTime(.026, gameAudioContext.currentTime, .18);
+      }
+    };
+  }
+
+  window.speechSynthesis.speak(utterance);
 }
 
 const NPC_PLEASANTRIES = [
@@ -1490,6 +1689,7 @@ function greetNpc(npc) {
   );
   const greeting = NPC_PLEASANTRIES[Math.floor(Math.random() * NPC_PLEASANTRIES.length)];
   toast(npc.name + ': “' + greeting + '”');
+  speakNpcGreeting(greeting, npc.gender);
 }
 
 function startPunchAnimation(group) {
@@ -1579,18 +1779,45 @@ function updateNpcLife(delta, time) {
   });
 
   npcCars.forEach((car) => {
+    const now = performance.now();
     const braking = carShouldBrake(car);
+
+    if (braking) {
+      if (!car.blockedSince) car.blockedSince = now;
+      const stoppedFor = now - car.blockedSince;
+
+      if (stoppedFor >= 5000 && car.hornCount < 1) {
+        playCarHorn(car);
+        car.hornCount = 1;
+      }
+
+      if (stoppedFor >= 10000 && car.hornCount < 2) {
+        playCarHorn(car);
+        car.hornCount = 2;
+        car.pendingReverse = true;
+      }
+
+      // After two honks (~10 seconds stopped), reverse only when the path behind is clear.
+      if (car.pendingReverse && !carRoadBlocked(car, -car.direction)) {
+        reverseCarDirection(car);
+      }
+    } else {
+      car.blockedSince = 0;
+      car.hornCount = 0;
+      car.pendingReverse = false;
+    }
+
     const targetSpeed = braking ? 0 : car.speed;
     car.currentSpeed = THREE.MathUtils.lerp(
       car.currentSpeed,
       targetSpeed,
-      Math.min(1, delta * (braking ? 7.5 : 2.6))
+      Math.min(1, delta * (braking ? 8.5 : 2.4))
     );
 
     car.brakeMaterial.emissiveIntensity = braking ? 2.2 : .55;
 
     car.wheels.forEach((wheel) => {
-      wheel.rotation.x -= car.currentSpeed * delta * .85;
+      wheel.rotation.x -= car.currentSpeed * delta * .72;
     });
 
     if (car.axis === 'x') {
@@ -1924,6 +2151,9 @@ async function visitHouse(homeId) {
   me.rotation.y = 0;
   me.userData.grounded = true;
   me.userData.verticalVelocity = 0;
+  const homeButton = document.querySelector('#home-btn');
+  homeButton.disabled = true;
+  homeButton.title = 'Unavailable while inside a house';
   transitioningHouse = false;
   toast('Inside ' + house.label + '. Walk to the front door and press E to leave.');
 }
@@ -1943,6 +2173,9 @@ async function leaveHouse() {
   insideHouse = null;
   if (savedCameraDistance != null) cameraDistance = savedCameraDistance;
   savedCameraDistance = null;
+  const homeButton = document.querySelector('#home-btn');
+  homeButton.disabled = false;
+  homeButton.title = 'Go home';
   transitioningHouse = false;
 }
 
@@ -2109,8 +2342,41 @@ genderOptions.querySelectorAll('.gender-choice').forEach((button) => {
   button.addEventListener('click', () => {
     selectedGender = button.dataset.gender;
     genderOptions.querySelectorAll('.gender-choice').forEach((item) => item.classList.toggle('selected', item === button));
+    updateAvatarPreview();
   });
 });
+
+function updateAvatarPreview() {
+  const preview = document.querySelector('#avatar-preview');
+  if (!preview) return;
+  const outfit = OUTFITS[selectedOutfit] || OUTFITS.sky;
+  const skinHex = '#' + (SKIN_TONES[selectedSkinTone] || SKIN_TONES.light).toString(16).padStart(6, '0');
+  const hairHex = '#' + (HAIR_COLORS[selectedHairColor] || HAIR_COLORS.espresso).toString(16).padStart(6, '0');
+  const eyeHex = '#' + (EYE_COLORS[selectedEyeColor] || EYE_COLORS.violet).toString(16).padStart(6, '0');
+
+  preview.dataset.hair = selectedHairStyle;
+  preview.style.setProperty('--skin', skinHex);
+  preview.style.setProperty('--hair', hairHex);
+  preview.style.setProperty('--eye', eyeHex);
+  preview.style.setProperty('--top', outfit.top);
+}
+
+function bindChoiceGroup(selector, onSelect) {
+  const host = document.querySelector(selector);
+  if (!host) return;
+  host.querySelectorAll('[data-value]').forEach((button) => {
+    button.addEventListener('click', () => {
+      host.querySelectorAll('[data-value]').forEach((item) => item.classList.toggle('selected', item === button));
+      onSelect(button.dataset.value);
+      updateAvatarPreview();
+    });
+  });
+}
+
+bindChoiceGroup('#hair-style-options', (value) => { selectedHairStyle = value; });
+bindChoiceGroup('#hair-color-options', (value) => { selectedHairColor = value; });
+bindChoiceGroup('#skin-tone-options', (value) => { selectedSkinTone = value; });
+bindChoiceGroup('#eye-color-options', (value) => { selectedEyeColor = value; });
 
 const outfitOptions = document.querySelector('#outfit-options');
 Object.values(OUTFITS).forEach((outfit, index) => {
@@ -2124,6 +2390,7 @@ Object.values(OUTFITS).forEach((outfit, index) => {
   button.addEventListener('click', () => {
     selectedOutfit = outfit.id;
     outfitOptions.querySelectorAll('.outfit-choice').forEach((item) => item.classList.toggle('selected', item === button));
+    updateAvatarPreview();
   });
   outfitOptions.appendChild(button);
 });
@@ -2132,7 +2399,21 @@ document.querySelector('#join-form').addEventListener('submit', (event) => {
   event.preventDefault();
   if (joined) return;
   const name = document.querySelector('#name').value.trim() || 'Guest';
-  socket.emit('player:join', { name, gender: selectedGender, outfit: selectedOutfit });
+  startAmbientMusic();
+  socket.emit('player:join', {
+    name,
+    gender: selectedGender,
+    outfit: selectedOutfit,
+    hairStyle: selectedHairStyle,
+    hairColor: selectedHairColor,
+    skinTone: selectedSkinTone,
+    eyeColor: selectedEyeColor
+  });
+});
+updateAvatarPreview();
+
+document.querySelector('#music-btn').addEventListener('click', () => {
+  setMusicEnabled(!musicEnabled);
 });
 
 
@@ -2540,7 +2821,7 @@ document.querySelectorAll('.tabs button').forEach((button) => {
 });
 
 document.querySelector('#home-btn').addEventListener('click', () => {
-  if (!me || !socialState) return;
+  if (!me || !socialState || insideHouse) return;
   const homeId = socialState.self.residenceHomeId;
   const p = homePositions[homeId];
   me.position.set(p[0], 0, p[1] + 8);
