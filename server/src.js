@@ -62,6 +62,7 @@ function publicPlayer(player) {
     z: player.z,
     rot: player.rot,
     moving: player.moving,
+    sprinting: Boolean(player.sprinting),
     homeId: player.homeId,
     residenceHomeId: player.residenceHomeId,
     partyId: player.partyId || null
@@ -157,6 +158,7 @@ io.on('connection', (socket) => {
       z: 10 + (homeId % 3) * 2,
       rot: Math.PI,
       moving: false,
+      sprinting: false,
       homeId,
       residenceHomeId: homeId,
       partyId: null
@@ -183,6 +185,7 @@ io.on('connection', (socket) => {
     player.z = clamp(Number(data.z) || 0, -100000, 100000);
     player.rot = clamp(Number(data.rot) || 0, -Math.PI * 8, Math.PI * 8);
     player.moving = Boolean(data.moving);
+    player.sprinting = player.moving && Boolean(data.sprinting);
 
     socket.broadcast.volatile.emit('player:update', publicPlayer(player));
   });
