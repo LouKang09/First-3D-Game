@@ -40,16 +40,23 @@ function safeName(value) {
     .slice(0, 18) || 'Guest';
 }
 
-function safeColor(value) {
-  const color = String(value || '');
-  return /^#[0-9a-f]{6}$/i.test(color) ? color : '#7c3aed';
+const VALID_OUTFITS = new Set(['sky', 'berry', 'mint', 'street', 'sunrise']);
+
+function safeGender(value) {
+  return value === 'male' ? 'male' : 'female';
+}
+
+function safeOutfit(value) {
+  const outfit = String(value || '');
+  return VALID_OUTFITS.has(outfit) ? outfit : 'sky';
 }
 
 function publicPlayer(player) {
   return {
     id: player.id,
     name: player.name,
-    color: player.color,
+    gender: player.gender,
+    outfit: player.outfit,
     x: player.x,
     y: player.y,
     z: player.z,
@@ -143,7 +150,8 @@ io.on('connection', (socket) => {
     const player = {
       id: socket.id,
       name: safeName(payload.name),
-      color: safeColor(payload.color),
+      gender: safeGender(payload.gender),
+      outfit: safeOutfit(payload.outfit),
       x: 0,
       y: 0,
       z: 10 + (homeId % 3) * 2,
@@ -170,9 +178,9 @@ io.on('connection', (socket) => {
     const player = players.get(socket.id);
     if (!player) return;
 
-    player.x = clamp(Number(data.x) || 0, -84, 84);
+    player.x = clamp(Number(data.x) || 0, -100000, 100000);
     player.y = clamp(Number(data.y) || 0, -2, 8);
-    player.z = clamp(Number(data.z) || 0, -84, 84);
+    player.z = clamp(Number(data.z) || 0, -100000, 100000);
     player.rot = clamp(Number(data.rot) || 0, -Math.PI * 8, Math.PI * 8);
     player.moving = Boolean(data.moving);
 
