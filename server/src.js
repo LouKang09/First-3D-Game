@@ -41,6 +41,10 @@ function safeName(value) {
 }
 
 const VALID_OUTFITS = new Set(['sky', 'berry', 'mint', 'street', 'sunrise']);
+const VALID_HAIR_STYLES = new Set(['classic', 'short', 'pony']);
+const VALID_HAIR_COLORS = new Set(['espresso', 'chestnut', 'midnight']);
+const VALID_SKIN_TONES = new Set(['light', 'warm', 'deep']);
+const VALID_EYE_COLORS = new Set(['violet', 'ocean', 'hazel']);
 
 function safeGender(value) {
   return value === 'male' ? 'male' : 'female';
@@ -50,6 +54,10 @@ function safeOutfit(value) {
   const outfit = String(value || '');
   return VALID_OUTFITS.has(outfit) ? outfit : 'sky';
 }
+function safeChoice(value, valid, fallback) {
+  const normalized = String(value || '');
+  return valid.has(normalized) ? normalized : fallback;
+}
 
 function publicPlayer(player) {
   return {
@@ -57,6 +65,10 @@ function publicPlayer(player) {
     name: player.name,
     gender: player.gender,
     outfit: player.outfit,
+    hairStyle: player.hairStyle,
+    hairColor: player.hairColor,
+    skinTone: player.skinTone,
+    eyeColor: player.eyeColor,
     x: player.x,
     y: player.y,
     z: player.z,
@@ -175,6 +187,10 @@ io.on('connection', (socket) => {
       name: safeName(payload.name),
       gender: safeGender(payload.gender),
       outfit: safeOutfit(payload.outfit),
+      hairStyle: safeChoice(payload.hairStyle, VALID_HAIR_STYLES, 'classic'),
+      hairColor: safeChoice(payload.hairColor, VALID_HAIR_COLORS, 'espresso'),
+      skinTone: safeChoice(payload.skinTone, VALID_SKIN_TONES, 'light'),
+      eyeColor: safeChoice(payload.eyeColor, VALID_EYE_COLORS, 'violet'),
       x: 0,
       y: 0,
       z: 10 + (homeId % 3) * 2,
