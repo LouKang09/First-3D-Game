@@ -15,8 +15,20 @@ app.innerHTML = [
         '<p class="lead">A virtual neighborhood where friends can hang out, visit homes, live together and talk privately in parties.</p>',
         '<label for="name">Display name</label>',
         '<input id="name" maxlength="18" autocomplete="nickname" value="Guest" />',
-        '<span class="label">Avatar color</span>',
-        '<div id="swatches" class="swatches"></div>',
+        '<div class="creator-grid">',
+          '<div>',
+            '<span class="label">Gender</span>',
+            '<div id="gender-options" class="gender-options">',
+              '<button type="button" class="gender-choice selected" data-gender="female"><span>♀</span>Female</button>',
+              '<button type="button" class="gender-choice" data-gender="male"><span>♂</span>Male</button>',
+            '</div>',
+          '</div>',
+          '<div>',
+            '<span class="label">Outfit</span>',
+            '<div id="outfit-options" class="outfit-options"></div>',
+          '</div>',
+        '</div>',
+        '<div class="avatar-note"><strong>Chibi style</strong><span>Big head · expressive eyes · compact proportions</span></div>',
         '<button class="primary" type="submit">Enter Haven</button>',
         '<p class="fine">WASD to move · Shift to run · Drag to look · E to interact</p>',
       '</form>',
@@ -25,6 +37,8 @@ app.innerHTML = [
       '<div class="topbar">',
         '<div class="brand glass"><span class="brand-dot"></span><div><strong>HAVEN</strong><small id="online">1 online</small></div></div>',
         '<div class="top-actions">',
+          '<button id="zoom-out-btn" class="round glass zoom-control" title="Zoom out">−</button>',
+          '<button id="zoom-in-btn" class="round glass zoom-control" title="Zoom in">+</button>',
           '<button id="home-btn" class="round glass" title="Go home">⌂</button>',
           '<button id="social-btn" class="round glass" title="Social">☻</button>',
           '<button id="voice-btn" class="round glass" title="Party voice" disabled>♬</button>',
@@ -51,8 +65,30 @@ app.innerHTML = [
 
 const socket = io({ transports: ['websocket', 'polling'] });
 
-const COLORS = ['#7c3aed', '#2563eb', '#0f9f87', '#f97316', '#e11d48', '#d4a72c', '#6b7280'];
-let selectedColor = COLORS[0];
+const OUTFITS = {
+  sky: {
+    id: 'sky', name: 'Sky Day', top: '#78a9e8', top2: '#e9f3ff',
+    bottom: '#314763', accent: '#f5c76e', shoes: '#ffffff', hair: '#3a2b2a'
+  },
+  berry: {
+    id: 'berry', name: 'Berry Pop', top: '#b768a4', top2: '#f1c5df',
+    bottom: '#6b3c6c', accent: '#f8df71', shoes: '#fff2f7', hair: '#39282b'
+  },
+  mint: {
+    id: 'mint', name: 'Mint Club', top: '#58a993', top2: '#d8f0e8',
+    bottom: '#2e4c53', accent: '#f1b85b', shoes: '#f2f7f5', hair: '#302724'
+  },
+  street: {
+    id: 'street', name: 'Street', top: '#343a49', top2: '#71798a',
+    bottom: '#1f2937', accent: '#e45858', shoes: '#f2f2f2', hair: '#201b1c'
+  },
+  sunrise: {
+    id: 'sunrise', name: 'Sunrise', top: '#e99868', top2: '#ffe0b5',
+    bottom: '#6d5547', accent: '#68a6b8', shoes: '#fff7ec', hair: '#51352d'
+  }
+};
+let selectedGender = 'female';
+let selectedOutfit = 'sky';
 let selfId = null;
 let joined = false;
 let me = null;
@@ -82,7 +118,7 @@ const scene = new THREE.Scene();
 scene.background = new THREE.Color(0xb7def3);
 scene.fog = new THREE.FogExp2(0xb7def3, 0.0082);
 
-const camera = new THREE.PerspectiveCamera(58, window.innerWidth / window.innerHeight, 0.1, 260);
+const camera = new THREE.PerspectiveCamera(58, window.innerWidth / window.innerHeight, 0.1, 520);
 const clock = new THREE.Clock();
 
 scene.add(new THREE.HemisphereLight(0xf4fbff, 0x52684c, 2.15));
@@ -404,77 +440,306 @@ for (let i = 0; i < 12; i += 1) {
   makeShrub(30 + Math.cos(a) * 14.0, 29 + Math.sin(a) * 14.0, 0.72, i % 3 === 0 ? 0x739d51 : 0x4f8650);
 }
 
-function createAvatar(data, local = false) {
-  const g = new THREE.Group();
-  const visual = new THREE.Group();
-  g.add(visual);
 
-  const shirtMat = material(data.color || '#7c3aed', 0.58);
-  const shirtDark = new THREE.MeshStandardMaterial({
-    color: new THREE.Color(data.color || '#7c3aed').multiplyScalar(0.72),
-    roughness: 0.68
+const CHUNK_SIZE = 96;
+const ACTIVE_CHUNK_RADIUS = 2;
+const chunkGroups = new Map();
+const proceduralHouses = new Map();
+
+function seededValue(x, z, salt = 0) {
+  const value = Math.sin(x * 127.1 + z * 311.7 + salt * 74.7) * 43758.5453123;
+  return value - Math.floor(value);
+}
+
+function procHouse(parent, globalX, globalZ, localX, localZ, seed, key) {
+  const house = new THREE.Group();
+  house.position.set(localX, 0, localZ);
+  const walls = [0xf3cfba, 0xc9dced, 0xd8caeb, 0xc9e1cf, 0xead5a8][Math.floor(seededValue(seed, 0, 1) * 5)];
+  const roof = [0x624a43, 0x4a5768, 0x5b4a68, 0x52604b][Math.floor(seededValue(seed, 0, 2) * 4)];
+  const trim = 0xf5f2e9;
+
+  cube(11.4, 0.38, 9.5, 0xbab5aa, 0, 0.2, 0, house);
+  cube(10.8, 5.8, 9.0, walls, 0, 3.1, 0, house);
+  const roofMesh = new THREE.Mesh(new THREE.ConeGeometry(7.5, 4.0, 4), material(roof, .84));
+  roofMesh.position.y = 7.35;
+  roofMesh.rotation.y = Math.PI / 4;
+  roofMesh.castShadow = true;
+  house.add(roofMesh);
+
+  cube(2.0, 3.65, .28, 0x704e3a, 0, 2.0, 4.57, house);
+  [-3.1, 3.1].forEach((wx) => {
+    cube(2.3, 2.0, .2, trim, wx, 3.3, 4.62, house);
+    cube(1.92, 1.62, .24, 0x9fd7e9, wx, 3.3, 4.76, house);
   });
-  const skinMat = material(0xf0bd95, 0.72);
-  const hairMat = material(0x2a2424, 0.82);
-  const pantsMat = material(0x263443, 0.78);
-  const shoeMat = material(0x171d25, 0.7);
+  cube(2.0, .12, 4.0, 0xd5cfc2, 0, .08, 7.0, house);
 
-  // Rounded torso with a subtle waist gives the avatar a friendlier social-game silhouette.
-  const torso = new THREE.Mesh(new THREE.CapsuleGeometry(0.72, 1.18, 7, 12), shirtMat);
-  torso.position.y = 2.48;
-  torso.scale.set(1.06, 1.0, 0.82);
-  torso.castShadow = true;
-  visual.add(torso);
+  if (seededValue(seed, 0, 3) > .45) {
+    cube(2.4, .75, .85, 0x4f8051, -3.6, .5, 5.1, house);
+    cube(2.4, .75, .85, 0x4f8051, 3.6, .5, 5.1, house);
+  }
 
-  const waist = new THREE.Mesh(new THREE.CylinderGeometry(0.58, 0.62, 0.48, 14), shirtDark);
-  waist.position.y = 1.6;
-  waist.castShadow = true;
-  visual.add(waist);
+  const plate = makeTextSprite('HOUSE', '#ffffff', 'rgba(31,41,55,.74)');
+  plate.position.set(0, 9.4, 0);
+  plate.scale.set(3.2, .8, 1);
+  house.add(plate);
 
-  // Head, ears, hair and simple facial features.
-  const head = new THREE.Mesh(new THREE.SphereGeometry(0.61, 22, 16), skinMat);
-  head.position.y = 4.02;
+  parent.add(house);
+  proceduralHouses.set(key, { id: key, x: globalX, z: globalZ, group: house });
+}
+
+function createChunk(cx, cz) {
+  const key = cx + ':' + cz;
+  if (chunkGroups.has(key)) return;
+  if (cx === 0 && cz === 0) {
+    chunkGroups.set(key, null);
+    return;
+  }
+
+  const originX = cx * CHUNK_SIZE;
+  const originZ = cz * CHUNK_SIZE;
+  const group = new THREE.Group();
+  group.position.set(originX, 0, originZ);
+
+  const ground = new THREE.Mesh(new THREE.PlaneGeometry(CHUNK_SIZE + .6, CHUNK_SIZE + .6), material(0x86b77a, 1));
+  ground.rotation.x = -Math.PI / 2;
+  ground.position.y = -0.015;
+  ground.receiveShadow = true;
+  group.add(ground);
+
+  cube(16, .08, CHUNK_SIZE, 0x4d5561, 0, .035, 0, group);
+  cube(CHUNK_SIZE, .08, 16, 0x4d5561, 0, .036, 0, group);
+  cube(2.1, .13, CHUNK_SIZE, 0xd7d3ca, -9.2, .065, 0, group);
+  cube(2.1, .13, CHUNK_SIZE, 0xd7d3ca, 9.2, .065, 0, group);
+  cube(CHUNK_SIZE, .13, 2.1, 0xd7d3ca, 0, .066, -9.2, group);
+  cube(CHUNK_SIZE, .13, 2.1, 0xd7d3ca, 0, .066, 9.2, group);
+
+  for (let p = -40; p <= 40; p += 8) {
+    cube(.22, .09, 3.0, 0xf3e8b8, 0, .095, p, group);
+    cube(3.0, .09, .22, 0xf3e8b8, p, .096, 0, group);
+  }
+
+  const lots = [
+    [-27, -27], [27, -27], [-27, 27], [27, 27]
+  ];
+  lots.forEach((lot, i) => {
+    const jx = (seededValue(cx, cz, 10 + i) - .5) * 7;
+    const jz = (seededValue(cx, cz, 20 + i) - .5) * 7;
+    const lx = lot[0] + jx;
+    const lz = lot[1] + jz;
+    const houseKey = key + ':h' + i;
+    procHouse(group, originX + lx, originZ + lz, lx, lz, cx * 97 + cz * 193 + i * 31, houseKey);
+  });
+
+  for (let i = 0; i < 10; i += 1) {
+    let lx = (seededValue(cx, cz, 100 + i * 2) - .5) * 82;
+    let lz = (seededValue(cx, cz, 101 + i * 2) - .5) * 82;
+    if (Math.abs(lx) < 13) lx += lx < 0 ? -16 : 16;
+    if (Math.abs(lz) < 13) lz += lz < 0 ? -16 : 16;
+    const trunk = new THREE.Mesh(new THREE.CylinderGeometry(.26, .38, 2.7, 8), material(0x755238));
+    trunk.position.set(lx, 1.35, lz);
+    trunk.castShadow = true;
+    group.add(trunk);
+    const leaves = new THREE.Mesh(new THREE.DodecahedronGeometry(1.35 + seededValue(cx, cz, 200 + i) * .45), material(0x3f7b49, 1));
+    leaves.position.set(lx, 3.4, lz);
+    leaves.castShadow = true;
+    group.add(leaves);
+  }
+
+  chunkGroups.set(key, group);
+  world.add(group);
+}
+
+function removeChunk(key) {
+  const group = chunkGroups.get(key);
+  if (group) {
+    world.remove(group);
+    group.traverse((node) => {
+      if (node.geometry) node.geometry.dispose();
+      if (node.material && !Array.isArray(node.material)) node.material.dispose();
+    });
+  }
+  chunkGroups.delete(key);
+  for (const houseKey of proceduralHouses.keys()) {
+    if (houseKey.startsWith(key + ':')) proceduralHouses.delete(houseKey);
+  }
+}
+
+function updateWorldStreaming(x, z) {
+  const centerX = Math.round(x / CHUNK_SIZE);
+  const centerZ = Math.round(z / CHUNK_SIZE);
+  const needed = new Set();
+
+  for (let dx = -ACTIVE_CHUNK_RADIUS; dx <= ACTIVE_CHUNK_RADIUS; dx += 1) {
+    for (let dz = -ACTIVE_CHUNK_RADIUS; dz <= ACTIVE_CHUNK_RADIUS; dz += 1) {
+      const cx = centerX + dx;
+      const cz = centerZ + dz;
+      const key = cx + ':' + cz;
+      needed.add(key);
+      createChunk(cx, cz);
+    }
+  }
+
+  for (const key of Array.from(chunkGroups.keys())) {
+    if (!needed.has(key)) removeChunk(key);
+  }
+}
+
+updateWorldStreaming(0, 0);
+
+function createAvatar(data, local = false) {
+  const gender = data.gender === 'male' ? 'male' : 'female';
+  const outfit = OUTFITS[data.outfit] || OUTFITS.sky;
+  const root = new THREE.Group();
+  const visual = new THREE.Group();
+  root.add(visual);
+
+  const skin = material(gender === 'female' ? 0xf2c3a2 : 0xeebc98, .7);
+  const hair = material(outfit.hair, .82);
+  const top = material(outfit.top, .58);
+  const top2 = material(outfit.top2, .64);
+  const bottom = material(outfit.bottom, .68);
+  const accent = material(outfit.accent, .6);
+  const shoes = material(outfit.shoes, .55);
+  const eyeMat = new THREE.MeshStandardMaterial({ color: 0x202631, roughness: .32 });
+  const whiteMat = material(0xffffff, .46);
+
+  // Chibi reference proportions: head is almost half the total character height.
+  const head = new THREE.Mesh(new THREE.SphereGeometry(1.02, 26, 20), skin);
+  head.position.y = 3.55;
+  head.scale.set(.98, 1.05, .94);
   head.castShadow = true;
   visual.add(head);
 
-  [-0.59, 0.59].forEach((x) => {
-    const ear = new THREE.Mesh(new THREE.SphereGeometry(0.11, 10, 8), skinMat);
-    ear.position.set(x, 4.01, 0);
-    visual.add(ear);
+  const cheekMat = new THREE.MeshBasicMaterial({ color: 0xe99b96, transparent: true, opacity: .45 });
+  [-.5, .5].forEach((x) => {
+    const cheek = new THREE.Mesh(new THREE.SphereGeometry(.11, 10, 8), cheekMat);
+    cheek.position.set(x, 3.42, .86);
+    cheek.scale.set(1.55, .7, .32);
+    visual.add(cheek);
   });
 
-  const hair = new THREE.Mesh(new THREE.SphereGeometry(0.64, 20, 12, 0, Math.PI * 2, 0, Math.PI * 0.56), hairMat);
-  hair.position.set(0, 4.23, -0.04);
-  hair.scale.set(1.02, 0.82, 1.02);
-  hair.castShadow = true;
-  visual.add(hair);
+  [-.36, .36].forEach((x) => {
+    const eyeWhite = new THREE.Mesh(new THREE.SphereGeometry(.19, 13, 10), whiteMat);
+    eyeWhite.position.set(x, 3.66, .89);
+    eyeWhite.scale.set(.78, 1.08, .34);
+    visual.add(eyeWhite);
 
-  const fringe = new THREE.Mesh(new THREE.BoxGeometry(0.78, 0.18, 0.16), hairMat);
-  fringe.position.set(-0.11, 4.35, 0.51);
-  fringe.rotation.z = -0.16;
+    const eye = new THREE.Mesh(new THREE.SphereGeometry(.105, 12, 9), eyeMat);
+    eye.position.set(x, 3.66, .99);
+    eye.scale.set(.82, 1.18, .42);
+    visual.add(eye);
+
+    const sparkle = new THREE.Mesh(new THREE.SphereGeometry(.025, 7, 6), new THREE.MeshBasicMaterial({ color: 0xffffff }));
+    sparkle.position.set(x - .025, 3.72, 1.04);
+    visual.add(sparkle);
+  });
+
+  const mouthCurve = new THREE.Mesh(new THREE.TorusGeometry(.115, .018, 6, 18, Math.PI), new THREE.MeshBasicMaterial({ color: 0x8f5b5d }));
+  mouthCurve.position.set(0, 3.3, .99);
+  mouthCurve.rotation.z = Math.PI;
+  visual.add(mouthCurve);
+
+  // Full, soft hair cap with gender-specific silhouette.
+  const hairCap = new THREE.Mesh(new THREE.SphereGeometry(1.055, 24, 18, 0, Math.PI * 2, 0, Math.PI * .62), hair);
+  hairCap.position.set(0, 3.82, -.06);
+  hairCap.scale.set(1.02, .9, 1.01);
+  hairCap.castShadow = true;
+  visual.add(hairCap);
+
+  const fringe = new THREE.Group();
+  [-.56, -.27, .02, .31, .58].forEach((x, i) => {
+    const lock = new THREE.Mesh(new THREE.ConeGeometry(.2, .62 + (i % 2) * .08, 8), hair);
+    lock.position.set(x, 4.08 - Math.abs(x) * .12, .73);
+    lock.rotation.x = Math.PI;
+    lock.rotation.z = x * .18;
+    fringe.add(lock);
+  });
   visual.add(fringe);
 
-  const eyeMat = new THREE.MeshBasicMaterial({ color: 0x20242b });
-  [-0.22, 0.22].forEach((x) => {
-    const eye = new THREE.Mesh(new THREE.SphereGeometry(0.055, 9, 7), eyeMat);
-    eye.position.set(x, 4.08, 0.565);
-    eye.scale.z = 0.55;
-    visual.add(eye);
-  });
+  if (gender === 'female') {
+    [-1, 1].forEach((side) => {
+      const sideHair = new THREE.Mesh(new THREE.CapsuleGeometry(.28, .68, 5, 9), hair);
+      sideHair.position.set(side * .82, 3.17, -.06);
+      sideHair.rotation.z = side * -.08;
+      sideHair.castShadow = true;
+      visual.add(sideHair);
+    });
+    const pony = new THREE.Mesh(new THREE.SphereGeometry(.42, 14, 10), hair);
+    pony.position.set(.78, 3.75, -.7);
+    pony.scale.set(.75, 1.25, .75);
+    pony.castShadow = true;
+    visual.add(pony);
+    const bow = new THREE.Mesh(new THREE.OctahedronGeometry(.23), accent);
+    bow.position.set(.7, 4.05, -.64);
+    visual.add(bow);
+  } else {
+    [-.62, -.31, 0, .31, .62].forEach((x, i) => {
+      const spike = new THREE.Mesh(new THREE.ConeGeometry(.22, .48, 8), hair);
+      spike.position.set(x, 4.57 + (i % 2) * .08, -.05);
+      spike.rotation.z = -x * .36;
+      visual.add(spike);
+    });
+  }
 
-  const mouth = new THREE.Mesh(new THREE.BoxGeometry(0.24, 0.035, 0.025), new THREE.MeshBasicMaterial({ color: 0x8f5f58 }));
-  mouth.position.set(0, 3.8, 0.6);
-  visual.add(mouth);
+  // Compact rounded torso.
+  const torso = new THREE.Mesh(new THREE.CapsuleGeometry(.65, .72, 7, 12), top);
+  torso.position.y = 2.08;
+  torso.scale.set(gender === 'female' ? .92 : 1.02, 1, .8);
+  torso.castShadow = true;
+  visual.add(torso);
+
+  // Outfit-specific overlay pieces make presets visibly different.
+  if (data.outfit === 'street') {
+    const jacket = new THREE.Mesh(new THREE.BoxGeometry(1.42, .9, .18), top2);
+    jacket.position.set(0, 2.18, .62);
+    jacket.castShadow = true;
+    visual.add(jacket);
+    [-.36, .36].forEach((x) => {
+      const snap = new THREE.Mesh(new THREE.SphereGeometry(.055, 8, 6), accent);
+      snap.position.set(x, 2.15, .74);
+      visual.add(snap);
+    });
+  } else if (data.outfit === 'berry') {
+    const collar = new THREE.Mesh(new THREE.TorusGeometry(.38, .09, 8, 20, Math.PI), top2);
+    collar.position.set(0, 2.53, .56);
+    collar.rotation.z = Math.PI;
+    visual.add(collar);
+  } else if (data.outfit === 'mint') {
+    const badge = new THREE.Mesh(new THREE.CircleGeometry(.16, 14), accent);
+    badge.position.set(.35, 2.25, .71);
+    visual.add(badge);
+  } else if (data.outfit === 'sunrise') {
+    const scarf = new THREE.Mesh(new THREE.TorusGeometry(.38, .105, 8, 20), accent);
+    scarf.position.set(0, 2.64, 0);
+    scarf.rotation.x = Math.PI / 2;
+    visual.add(scarf);
+  } else {
+    const pocket = new THREE.Mesh(new THREE.BoxGeometry(.38, .28, .08), top2);
+    pocket.position.set(.3, 2.05, .69);
+    visual.add(pocket);
+  }
+
+  const hip = new THREE.Mesh(new THREE.CylinderGeometry(.52, .58, .42, 14), bottom);
+  hip.position.y = 1.39;
+  hip.castShadow = true;
+  visual.add(hip);
+
+  if (gender === 'female') {
+    const skirt = new THREE.Mesh(new THREE.CylinderGeometry(.48, .72, .55, 16), bottom);
+    skirt.position.y = 1.28;
+    skirt.castShadow = true;
+    visual.add(skirt);
+  }
 
   function makeArm(side) {
     const pivot = new THREE.Group();
-    pivot.position.set(side * 0.86, 3.05, 0);
-    const upper = new THREE.Mesh(new THREE.CapsuleGeometry(0.19, 0.72, 4, 8), shirtMat);
-    upper.position.y = -0.48;
-    upper.castShadow = true;
-    pivot.add(upper);
-    const hand = new THREE.Mesh(new THREE.SphereGeometry(0.2, 10, 8), skinMat);
-    hand.position.y = -1.05;
+    pivot.position.set(side * .66, 2.37, 0);
+    const sleeve = new THREE.Mesh(new THREE.CapsuleGeometry(.17, .42, 4, 8), top2);
+    sleeve.position.y = -.28;
+    sleeve.castShadow = true;
+    pivot.add(sleeve);
+    const hand = new THREE.Mesh(new THREE.SphereGeometry(.2, 12, 9), skin);
+    hand.position.y = -.7;
     hand.castShadow = true;
     pivot.add(hand);
     visual.add(pivot);
@@ -483,13 +748,14 @@ function createAvatar(data, local = false) {
 
   function makeLeg(side) {
     const pivot = new THREE.Group();
-    pivot.position.set(side * 0.34, 1.52, 0);
-    const leg = new THREE.Mesh(new THREE.CapsuleGeometry(0.22, 0.78, 4, 8), pantsMat);
-    leg.position.y = -0.55;
+    pivot.position.set(side * .28, 1.15, 0);
+    const leg = new THREE.Mesh(new THREE.CapsuleGeometry(.2, .48, 4, 8), bottom);
+    leg.position.y = -.34;
     leg.castShadow = true;
     pivot.add(leg);
-    const shoe = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.28, 0.72), shoeMat);
-    shoe.position.set(0, -1.08, 0.12);
+    const shoe = new THREE.Mesh(new THREE.SphereGeometry(.28, 12, 9), shoes);
+    shoe.position.set(0, -.76, .16);
+    shoe.scale.set(1.0, .58, 1.3);
     shoe.castShadow = true;
     pivot.add(shoe);
     visual.add(pivot);
@@ -501,49 +767,41 @@ function createAvatar(data, local = false) {
   const legL = makeLeg(-1);
   const legR = makeLeg(1);
 
-  // Ground contact ring makes the local avatar immediately readable.
-  const groundRing = new THREE.Mesh(
-    new THREE.RingGeometry(local ? 0.72 : 0.58, local ? 0.9 : 0.72, 32),
+  const ring = new THREE.Mesh(
+    new THREE.RingGeometry(local ? .72 : .58, local ? .92 : .72, 32),
     new THREE.MeshBasicMaterial({
-      color: local ? 0xffffff : new THREE.Color(data.color || '#7c3aed'),
+      color: local ? 0xffffff : new THREE.Color(outfit.top),
       transparent: true,
-      opacity: local ? 0.62 : 0.18,
+      opacity: local ? .5 : .16,
       side: THREE.DoubleSide,
       depthWrite: false
     })
   );
-  groundRing.rotation.x = -Math.PI / 2;
-  groundRing.position.y = 0.03;
-  g.add(groundRing);
+  ring.rotation.x = -Math.PI / 2;
+  ring.position.y = .025;
+  root.add(ring);
 
   const name = makeTextSprite(data.name || 'Player', '#ffffff', local ? 'rgba(79,70,229,.9)' : 'rgba(17,24,39,.82)');
-  name.position.y = 5.35;
-  name.scale.set(3.9, 0.97, 1);
-  g.add(name);
+  name.position.y = 5.05;
+  name.scale.set(3.7, .92, 1);
+  root.add(name);
 
-  g.position.set(data.x || 0, 0, data.z || 0);
-  g.rotation.y = data.rot || Math.PI;
-  g.userData = {
-    visual,
-    torso,
-    head,
-    armL,
-    armR,
-    legL,
-    legR,
-    groundRing,
+  root.position.set(data.x || 0, 0, data.z || 0);
+  root.rotation.y = data.rot || Math.PI;
+  root.userData = {
+    visual, torso, head, armL, armR, legL, legR, groundRing: ring,
     moving: false,
     target: new THREE.Vector3(data.x || 0, 0, data.z || 0),
     targetRot: data.rot || Math.PI,
     local
   };
-  scene.add(g);
-  return g;
+  scene.add(root);
+  return root;
 }
 
 let cameraYaw = Math.PI;
 let cameraPitch = 0.34;
-let cameraDistance = 8.5;
+let cameraDistance = 9.5;
 const keys = new Set();
 
 function lerpAngle(a, b, t) {
@@ -579,11 +837,11 @@ function updateLocal(delta) {
 
     // CameraYaw describes the camera's offset from the player, so movement must
     // use the opposite vector for screen-forward and a perpendicular vector for right.
-    const dx = (-forward * sin - strafe * cos) * speed * delta;
-    const dz = (-forward * cos + strafe * sin) * speed * delta;
+    const dx = (-forward * sin + strafe * cos) * speed * delta;
+    const dz = (-forward * cos - strafe * sin) * speed * delta;
 
-    me.position.x = THREE.MathUtils.clamp(me.position.x + dx, -82, 82);
-    me.position.z = THREE.MathUtils.clamp(me.position.z + dz, -82, 82);
+    me.position.x += dx;
+    me.position.z += dz;
 
     const targetRot = Math.atan2(dx, dz);
     me.rotation.y = lerpAngle(me.rotation.y, targetRot, Math.min(1, delta * 12));
@@ -623,7 +881,7 @@ function updateAvatarAnimation(group, time, delta) {
 
 function updateCamera(delta) {
   if (!me) return;
-  const target = me.position.clone().add(new THREE.Vector3(0, 2.6, 0));
+  const target = me.position.clone().add(new THREE.Vector3(0, cameraDistance > 18 ? 3.7 : 2.7, 0));
   const cp = Math.cos(cameraPitch);
   const offset = new THREE.Vector3(
     Math.sin(cameraYaw) * cp,
@@ -648,18 +906,30 @@ function updateRemote(delta, time) {
 function nearestHouse() {
   if (!me) return null;
   let best = null;
+
   homePositions.forEach((p, index) => {
     const d = Math.hypot(me.position.x - p[0], me.position.z - p[1]);
-    if (d < 8 && (!best || d < best.distance)) best = { homeId: index, distance: d };
+    if (d < 8 && (!best || d < best.distance)) best = { homeId: index, distance: d, permanent: true };
   });
+
+  proceduralHouses.forEach((house) => {
+    const d = Math.hypot(me.position.x - house.x, me.position.z - house.z);
+    if (d < 7.5 && (!best || d < best.distance)) best = { homeId: house.id, distance: d, permanent: false, x: house.x, z: house.z };
+  });
+
   return best;
 }
 
 function visitHouse(homeId) {
-  if (!me || !homePositions[homeId]) return;
-  const p = homePositions[homeId];
-  me.position.set(p[0], 0, p[1] + 7.6);
-  toast('Visiting Home #' + (homeId + 1) + '. Interiors are coming in the next milestone.');
+  if (!me) return;
+  if (typeof homeId === 'number' && homePositions[homeId]) {
+    const p = homePositions[homeId];
+    me.position.set(p[0], 0, p[1] + 7.6);
+    toast('Visiting Home #' + (homeId + 1) + '.');
+    return;
+  }
+  const house = proceduralHouses.get(homeId);
+  if (house) toast('You found a new neighborhood home. Interior visits are planned for the next home milestone.');
 }
 
 document.addEventListener('keydown', (event) => {
@@ -695,29 +965,46 @@ renderer.domElement.addEventListener('pointerup', () => {
 });
 
 renderer.domElement.addEventListener('wheel', (event) => {
-  cameraDistance = THREE.MathUtils.clamp(cameraDistance + Math.sign(event.deltaY) * 0.8, 5.2, 13);
+  cameraDistance = THREE.MathUtils.clamp(cameraDistance + Math.sign(event.deltaY) * 1.8, 4.8, 38);
 }, { passive: true });
 
-const swatches = document.querySelector('#swatches');
-COLORS.forEach((color, index) => {
+document.querySelector('#zoom-out-btn').addEventListener('click', () => {
+  cameraDistance = THREE.MathUtils.clamp(cameraDistance + 4, 4.8, 38);
+});
+
+document.querySelector('#zoom-in-btn').addEventListener('click', () => {
+  cameraDistance = THREE.MathUtils.clamp(cameraDistance - 4, 4.8, 38);
+});
+
+const genderOptions = document.querySelector('#gender-options');
+genderOptions.querySelectorAll('.gender-choice').forEach((button) => {
+  button.addEventListener('click', () => {
+    selectedGender = button.dataset.gender;
+    genderOptions.querySelectorAll('.gender-choice').forEach((item) => item.classList.toggle('selected', item === button));
+  });
+});
+
+const outfitOptions = document.querySelector('#outfit-options');
+Object.values(OUTFITS).forEach((outfit, index) => {
   const button = document.createElement('button');
   button.type = 'button';
-  button.className = 'swatch' + (index === 0 ? ' selected' : '');
-  button.style.background = color;
-  button.setAttribute('aria-label', 'Choose avatar color');
+  button.className = 'outfit-choice' + (index === 0 ? ' selected' : '');
+  button.dataset.outfit = outfit.id;
+  button.innerHTML =
+    '<span class="outfit-swatch"><i style="--top:' + outfit.top + ';--top2:' + outfit.top2 + ';--bottom:' + outfit.bottom + ';--accent:' + outfit.accent + '"></i></span>' +
+    '<strong>' + outfit.name + '</strong>';
   button.addEventListener('click', () => {
-    selectedColor = color;
-    swatches.querySelectorAll('.swatch').forEach((item) => item.classList.remove('selected'));
-    button.classList.add('selected');
+    selectedOutfit = outfit.id;
+    outfitOptions.querySelectorAll('.outfit-choice').forEach((item) => item.classList.toggle('selected', item === button));
   });
-  swatches.appendChild(button);
+  outfitOptions.appendChild(button);
 });
 
 document.querySelector('#join-form').addEventListener('submit', (event) => {
   event.preventDefault();
   if (joined) return;
   const name = document.querySelector('#name').value.trim() || 'Guest';
-  socket.emit('player:join', { name, color: selectedColor });
+  socket.emit('player:join', { name, gender: selectedGender, outfit: selectedOutfit });
 });
 
 function showHud() {
@@ -782,7 +1069,9 @@ function makePersonCard(player, mode) {
 
   const avatar = document.createElement('span');
   avatar.className = 'person-avatar';
-  avatar.style.background = player.color;
+  const outfit = OUTFITS[player.outfit] || OUTFITS.sky;
+  avatar.style.background = 'linear-gradient(135deg,' + outfit.top + ',' + outfit.bottom + ')';
+  avatar.textContent = player.gender === 'male' ? '♂' : '♀';
 
   const copy = document.createElement('div');
   copy.className = 'person-copy';
@@ -1164,39 +1453,63 @@ function drawMinimap() {
   if (!joined || !me) return;
   const w = map.width;
   const h = map.height;
-  const scale = w / 180;
-
-  mapCtx.clearRect(0, 0, w, h);
-  mapCtx.fillStyle = '#25334a';
-  mapCtx.fillRect(0, 0, w, h);
-
-  mapCtx.fillStyle = '#5a6370';
-  mapCtx.fillRect(w / 2 - 9 * scale, 0, 18 * scale, h);
-  mapCtx.fillRect(0, h / 2 - 9 * scale, w, 18 * scale);
-
-  mapCtx.fillStyle = '#7da373';
-  homePositions.forEach((p) => {
-    mapCtx.fillRect(w / 2 + p[0] * scale - 5, h / 2 + p[1] * scale - 4, 10, 8);
+  const scale = 1.15;
+  const worldToMap = (x, z) => ({
+    x: w / 2 + (x - me.position.x) * scale,
+    y: h / 2 + (z - me.position.z) * scale
   });
 
-  if (socialState) {
-    const home = homePositions[socialState.self.residenceHomeId];
-    if (home) {
-      mapCtx.strokeStyle = '#ffffff';
-      mapCtx.lineWidth = 2;
-      mapCtx.strokeRect(w / 2 + home[0] * scale - 7, h / 2 + home[1] * scale - 6, 14, 12);
+  mapCtx.clearRect(0, 0, w, h);
+  mapCtx.fillStyle = '#243348';
+  mapCtx.fillRect(0, 0, w, h);
+
+  const centerChunkX = Math.round(me.position.x / CHUNK_SIZE);
+  const centerChunkZ = Math.round(me.position.z / CHUNK_SIZE);
+  mapCtx.strokeStyle = '#626c77';
+  mapCtx.lineWidth = 10;
+
+  for (let cx = centerChunkX - 2; cx <= centerChunkX + 2; cx += 1) {
+    for (let cz = centerChunkZ - 2; cz <= centerChunkZ + 2; cz += 1) {
+      const ox = cx * CHUNK_SIZE;
+      const oz = cz * CHUNK_SIZE;
+      const v1 = worldToMap(ox, oz - CHUNK_SIZE / 2);
+      const v2 = worldToMap(ox, oz + CHUNK_SIZE / 2);
+      mapCtx.beginPath(); mapCtx.moveTo(v1.x, v1.y); mapCtx.lineTo(v2.x, v2.y); mapCtx.stroke();
+      const h1 = worldToMap(ox - CHUNK_SIZE / 2, oz);
+      const h2 = worldToMap(ox + CHUNK_SIZE / 2, oz);
+      mapCtx.beginPath(); mapCtx.moveTo(h1.x, h1.y); mapCtx.lineTo(h2.x, h2.y); mapCtx.stroke();
     }
   }
 
+  mapCtx.fillStyle = '#8aad76';
+  proceduralHouses.forEach((house) => {
+    const p = worldToMap(house.x, house.z);
+    if (p.x > -8 && p.x < w + 8 && p.y > -8 && p.y < h + 8) {
+      mapCtx.fillRect(p.x - 3, p.y - 3, 6, 6);
+    }
+  });
+
+  homePositions.forEach((p, index) => {
+    const m = worldToMap(p[0], p[1]);
+    if (m.x > -10 && m.x < w + 10 && m.y > -10 && m.y < h + 10) {
+      mapCtx.fillStyle = socialState && index === socialState.self.residenceHomeId ? '#ffffff' : '#9fc08c';
+      mapCtx.fillRect(m.x - 4, m.y - 4, 8, 8);
+    }
+  });
+
   remotePlayers.forEach((remote) => {
-    mapCtx.beginPath();
-    mapCtx.fillStyle = remote.data.color || '#d1d5db';
-    mapCtx.arc(w / 2 + remote.mesh.position.x * scale, h / 2 + remote.mesh.position.z * scale, 4, 0, Math.PI * 2);
-    mapCtx.fill();
+    const p = worldToMap(remote.mesh.position.x, remote.mesh.position.z);
+    if (p.x > 0 && p.x < w && p.y > 0 && p.y < h) {
+      const outfit = OUTFITS[remote.data.outfit] || OUTFITS.sky;
+      mapCtx.beginPath();
+      mapCtx.fillStyle = outfit.top;
+      mapCtx.arc(p.x, p.y, 4, 0, Math.PI * 2);
+      mapCtx.fill();
+    }
   });
 
   mapCtx.save();
-  mapCtx.translate(w / 2 + me.position.x * scale, h / 2 + me.position.z * scale);
+  mapCtx.translate(w / 2, h / 2);
   mapCtx.rotate(-me.rotation.y);
   mapCtx.fillStyle = '#ffffff';
   mapCtx.beginPath();
@@ -1281,7 +1594,7 @@ function updatePrompt() {
   const nearest = nearestHouse();
   if (nearest) {
     prompt.classList.add('show');
-    document.querySelector('#prompt-text').textContent = 'Visit Home #' + (nearest.homeId + 1);
+    document.querySelector('#prompt-text').textContent = nearest.permanent ? 'Visit Home #' + (nearest.homeId + 1) : 'Explore this home';
   } else {
     prompt.classList.remove('show');
   }
@@ -1300,6 +1613,11 @@ function frame(now) {
     updateRemote(delta, time);
     updateAvatarAnimation(me, time, delta);
     updateCamera(delta);
+    updateWorldStreaming(me.position.x, me.position.z);
+    sky.position.set(me.position.x, 0, me.position.z);
+    sun.position.set(me.position.x - 42, 68, me.position.z + 34);
+    sun.target.position.set(me.position.x, 0, me.position.z);
+    if (!sun.target.parent) scene.add(sun.target);
     updatePrompt();
     drawMinimap();
 
