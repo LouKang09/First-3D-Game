@@ -212,6 +212,21 @@ io.on('connection', (socket) => {
     socket.broadcast.volatile.emit('player:update', publicPlayer(player));
   });
 
+  socket.on('combat:punch', (targetId) => {
+    const attacker = players.get(socket.id);
+    const target = players.get(targetId);
+
+    if (!attacker || !target || targetId === socket.id) return;
+
+    const distance = Math.hypot(attacker.x - target.x, attacker.z - target.z);
+    if (distance > 3.4) return;
+
+    io.emit('combat:punch', {
+      attackerId: socket.id,
+      targetId
+    });
+  });
+
   socket.on('friend:request', (targetId) => {
     if (
       !players.has(targetId) ||
