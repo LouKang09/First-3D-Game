@@ -382,12 +382,12 @@ io.on('connection', (socket) => {
     const party = parties.get(player.partyId);
     if (!party) return;
 
-    const byteLength = pcm && (pcm.byteLength || pcm.length || 0);
-    if (!byteLength || byteLength > 24000) return;
+    if (typeof pcm !== 'string' || !pcm.length || pcm.length > 40000) return;
+    if (!/^[A-Za-z0-9+/=]+$/.test(pcm)) return;
 
     for (const memberId of party.members) {
       if (memberId !== socket.id) {
-        io.to(memberId).volatile.emit('voice:pcm', {
+        io.to(memberId).emit('voice:pcm', {
           fromId: socket.id,
           pcm
         });
