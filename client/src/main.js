@@ -16,6 +16,14 @@ app.innerHTML = [
         '<p class="lead">A virtual neighborhood where friends can hang out, visit homes, live together and talk privately in parties.</p>',
         '<label for="name">Display name</label>',
         '<input id="name" maxlength="18" autocomplete="nickname" value="Guest" />',
+        '<div class="avatar-preview-card">',
+          '<div id="avatar-preview" class="avatar-preview" data-hair="classic">',
+            '<div class="preview-hair-back"></div>',
+            '<div class="preview-head"><i class="preview-eye left"></i><i class="preview-eye right"></i><i class="preview-mouth"></i><i class="preview-fringe"></i></div>',
+            '<div class="preview-body"></div>',
+          '</div>',
+          '<div><strong>Preview</strong><span>Customize before entering Haven</span></div>',
+        '</div>',
         '<div class="creator-grid">',
           '<div>',
             '<span class="label">Gender</span>',
@@ -29,7 +37,29 @@ app.innerHTML = [
             '<div id="outfit-options" class="outfit-options"></div>',
           '</div>',
         '</div>',
-        '<div class="avatar-note"><strong>Anime style</strong><span>Stylized proportions · expressive eyes · layered hair</span></div>',
+        '<div class="appearance-grid">',
+          '<div><span class="label">Hair style</span><div id="hair-style-options" class="choice-row">',
+            '<button type="button" class="appearance-choice selected" data-value="classic">Classic</button>',
+            '<button type="button" class="appearance-choice" data-value="short">Short</button>',
+            '<button type="button" class="appearance-choice" data-value="pony">Pony/Spiky</button>',
+          '</div></div>',
+          '<div><span class="label">Hair color</span><div id="hair-color-options" class="swatch-row">',
+            '<button type="button" class="appearance-swatch selected" data-value="espresso" style="--swatch:#2b2022" aria-label="Espresso"></button>',
+            '<button type="button" class="appearance-swatch" data-value="chestnut" style="--swatch:#6b3f2c" aria-label="Chestnut"></button>',
+            '<button type="button" class="appearance-swatch" data-value="midnight" style="--swatch:#171923" aria-label="Midnight"></button>',
+          '</div></div>',
+          '<div><span class="label">Skin tone</span><div id="skin-tone-options" class="swatch-row">',
+            '<button type="button" class="appearance-swatch selected" data-value="light" style="--swatch:#f1c2a2" aria-label="Light"></button>',
+            '<button type="button" class="appearance-swatch" data-value="warm" style="--swatch:#d99b73" aria-label="Warm"></button>',
+            '<button type="button" class="appearance-swatch" data-value="deep" style="--swatch:#8e5b42" aria-label="Deep"></button>',
+          '</div></div>',
+          '<div><span class="label">Eye color</span><div id="eye-color-options" class="swatch-row">',
+            '<button type="button" class="appearance-swatch selected" data-value="violet" style="--swatch:#6266a6" aria-label="Violet"></button>',
+            '<button type="button" class="appearance-swatch" data-value="ocean" style="--swatch:#3d789b" aria-label="Ocean"></button>',
+            '<button type="button" class="appearance-swatch" data-value="hazel" style="--swatch:#8b6a3f" aria-label="Hazel"></button>',
+          '</div></div>',
+        '</div>',
+        '<div class="avatar-note"><strong>Anime style</strong><span>Face details now hug the head · rounded hands & shoes</span></div>',
         '<button class="primary" type="submit">Enter Haven</button>',
         '<p class="fine">WASD to move · Shift sprint · Space jump · Drag to look · Left-click players · E interact</p>',
       '</form>',
@@ -43,6 +73,7 @@ app.innerHTML = [
           '<button id="home-btn" class="round glass" title="Go home">⌂</button>',
           '<button id="social-btn" class="round glass" title="Social">☻</button>',
           '<button id="voice-btn" class="round glass voice-control" title="Join a party to enable speaking" disabled>🎙</button>',
+          '<button id="music-btn" class="round glass active" title="Background music">♫</button>',
         '</div>',
       '</div>',
       '<div id="status" class="status glass"><strong id="status-name">Guest</strong><span id="status-home">Home #1</span><div class="keys"><kbd>WASD</kbd> move <kbd>Shift</kbd> sprint <kbd>Space</kbd> jump <kbd>E</kbd> interact <kbd>R</kbd> punch</div></div>',
@@ -101,8 +132,28 @@ const OUTFITS = {
     bottom: '#6d5547', accent: '#68a6b8', shoes: '#fff7ec', hair: '#51352d'
   }
 };
+const SKIN_TONES = {
+  light: 0xf1c2a2,
+  warm: 0xd99b73,
+  deep: 0x8e5b42
+};
+const HAIR_COLORS = {
+  espresso: 0x2b2022,
+  chestnut: 0x6b3f2c,
+  midnight: 0x171923
+};
+const EYE_COLORS = {
+  violet: 0x6266a6,
+  ocean: 0x3d789b,
+  hazel: 0x8b6a3f
+};
+
 let selectedGender = 'female';
 let selectedOutfit = 'sky';
+let selectedHairStyle = 'classic';
+let selectedHairColor = 'espresso';
+let selectedSkinTone = 'light';
+let selectedEyeColor = 'violet';
 let selfId = null;
 let joined = false;
 let me = null;
@@ -819,74 +870,83 @@ function createAvatar(data, local = false) {
   const visual = new THREE.Group();
   root.add(visual);
 
-  const skin = material(gender === 'female' ? 0xf3c6a7 : 0xefbd9b, .68);
-  const hair = material(outfit.hair, .8);
+  const skinTone = SKIN_TONES[data.skinTone] || SKIN_TONES.light;
+  const hairColor = HAIR_COLORS[data.hairColor] || HAIR_COLORS.espresso;
+  const eyeColor = EYE_COLORS[data.eyeColor] || EYE_COLORS.violet;
+  const hairStyle = ['classic', 'short', 'pony'].includes(data.hairStyle) ? data.hairStyle : 'classic';
+
+  const skin = material(skinTone, .68);
+  const hair = material(hairColor, .8);
   const top = material(outfit.top, .55);
   const top2 = material(outfit.top2, .6);
   const bottom = material(outfit.bottom, .7);
   const accent = material(outfit.accent, .55);
   const shoes = material(outfit.shoes, .58);
   const eyeDark = new THREE.MeshStandardMaterial({ color: 0x202638, roughness: .26 });
-  const eyeTint = new THREE.MeshStandardMaterial({ color: gender === 'female' ? 0x5d5f9b : 0x426c87, roughness: .24 });
-  const white = material(0xffffff, .42);
+  const eyeTint = new THREE.MeshStandardMaterial({ color: eyeColor, roughness: .24 });
+  const white = new THREE.MeshBasicMaterial({ color: 0xffffff });
 
-  // Anime-inspired proportions: stylized head, slim torso and longer limbs.
+  // Head with facial features parented directly to it so they stay flush at every angle.
   const head = new THREE.Mesh(new THREE.SphereGeometry(.72, 28, 22), skin);
   head.position.y = 4.55;
   head.scale.set(.92, 1.04, .88);
   head.castShadow = true;
   visual.add(head);
 
-  // Slightly pointed chin silhouette.
-  const chin = new THREE.Mesh(new THREE.SphereGeometry(.43, 20, 14), skin);
-  chin.position.set(0, 4.17, .05);
-  chin.scale.set(.86, .72, .88);
-  chin.castShadow = true;
-  visual.add(chin);
+  const faceRig = new THREE.Group();
+  head.add(faceRig);
 
-  // Large anime eyes with colored iris and catch lights.
-  [-.27, .27].forEach((x) => {
-    const eyeWhite = new THREE.Mesh(new THREE.SphereGeometry(.15, 14, 11), white);
-    eyeWhite.position.set(x, 4.58, .65);
-    eyeWhite.scale.set(1.0, .75, .28);
-    visual.add(eyeWhite);
+  [-.29, .29].forEach((x) => {
+    const eyeWhite = new THREE.Mesh(new THREE.CircleGeometry(.155, 22), white);
+    eyeWhite.position.set(x, .035, .704);
+    eyeWhite.scale.set(1, .72, 1);
+    faceRig.add(eyeWhite);
 
-    const iris = new THREE.Mesh(new THREE.SphereGeometry(.092, 13, 10), eyeTint);
-    iris.position.set(x, 4.57, .72);
-    iris.scale.set(.95, 1.1, .35);
-    visual.add(iris);
+    const iris = new THREE.Mesh(new THREE.CircleGeometry(.09, 20), eyeTint);
+    iris.position.set(x, .025, .711);
+    iris.scale.set(.92, 1.08, 1);
+    faceRig.add(iris);
 
-    const pupil = new THREE.Mesh(new THREE.SphereGeometry(.045, 10, 8), eyeDark);
-    pupil.position.set(x, 4.57, .765);
-    pupil.scale.z = .38;
-    visual.add(pupil);
+    const pupil = new THREE.Mesh(new THREE.CircleGeometry(.042, 16), eyeDark);
+    pupil.position.set(x, .025, .716);
+    faceRig.add(pupil);
 
-    const shine = new THREE.Mesh(new THREE.SphereGeometry(.022, 7, 6), new THREE.MeshBasicMaterial({ color: 0xffffff }));
-    shine.position.set(x - .024, 4.63, .79);
-    visual.add(shine);
+    const shine = new THREE.Mesh(new THREE.CircleGeometry(.018, 12), new THREE.MeshBasicMaterial({ color: 0xffffff }));
+    shine.position.set(x - .025, .075, .721);
+    faceRig.add(shine);
 
-    // Upper lash / eye line.
-    const lash = new THREE.Mesh(new THREE.BoxGeometry(.25, .025, .025), eyeDark);
-    lash.position.set(x, 4.7, .695);
+    const lash = new THREE.Mesh(new THREE.BoxGeometry(.245, .026, .012), eyeDark);
+    lash.position.set(x, .155, .7);
     lash.rotation.z = x < 0 ? -.08 : .08;
-    visual.add(lash);
+    faceRig.add(lash);
   });
 
-  const nose = new THREE.Mesh(new THREE.SphereGeometry(.035, 8, 6), material(0xd99f87, .8));
-  nose.position.set(0, 4.42, .72);
-  visual.add(nose);
+  // Nose is intentionally low-relief instead of a detached sphere.
+  const nose = new THREE.Mesh(new THREE.SphereGeometry(.055, 10, 8), material(0xd59a79, .8));
+  nose.position.set(0, -.115, .69);
+  nose.scale.set(.6, .7, .22);
+  faceRig.add(nose);
 
-  const mouth = new THREE.Mesh(new THREE.TorusGeometry(.095, .012, 5, 16, Math.PI), new THREE.MeshBasicMaterial({ color: 0x9b5960 }));
-  mouth.position.set(0, 4.27, .72);
-  mouth.rotation.z = Math.PI;
-  visual.add(mouth);
+  const smileCurve = new THREE.QuadraticBezierCurve3(
+    new THREE.Vector3(-.115, -.29, .694),
+    new THREE.Vector3(0, -.37, .704),
+    new THREE.Vector3(.115, -.29, .694)
+  );
+  const mouth = new THREE.Line(
+    new THREE.BufferGeometry().setFromPoints(smileCurve.getPoints(14)),
+    new THREE.LineBasicMaterial({ color: 0xa85f67 })
+  );
+  faceRig.add(mouth);
 
   if (gender === 'female') {
-    [-.42, .42].forEach((x) => {
-      const blush = new THREE.Mesh(new THREE.SphereGeometry(.08, 9, 7), new THREE.MeshBasicMaterial({ color: 0xe69b9c, transparent: true, opacity: .28 }));
-      blush.position.set(x, 4.35, .67);
-      blush.scale.set(1.6, .5, .25);
-      visual.add(blush);
+    [-.43, .43].forEach((x) => {
+      const blush = new THREE.Mesh(
+        new THREE.CircleGeometry(.07, 16),
+        new THREE.MeshBasicMaterial({ color: 0xe69b9c, transparent: true, opacity: .24 })
+      );
+      blush.position.set(x, -.18, .682);
+      blush.scale.set(1.6, .5, 1);
+      faceRig.add(blush);
     });
   }
 
@@ -907,33 +967,52 @@ function createAvatar(data, local = false) {
   });
   visual.add(fringe);
 
-  if (gender === 'female') {
-    // Long side layers and flowing back hair.
+  if (hairStyle === 'short') {
     [-1, 1].forEach((side) => {
-      const sideLayer = new THREE.Mesh(new THREE.CapsuleGeometry(.18, 1.35, 5, 9), hair);
-      sideLayer.position.set(side * .61, 3.82, -.06);
-      sideLayer.rotation.z = side * -.06;
+      const sideLayer = new THREE.Mesh(new THREE.CapsuleGeometry(.16, .55, 5, 9), hair);
+      sideLayer.position.set(side * .6, 4.28, -.08);
       sideLayer.castShadow = true;
       visual.add(sideLayer);
     });
-    const backHair = new THREE.Mesh(new THREE.CapsuleGeometry(.48, 1.5, 6, 11), hair);
-    backHair.position.set(0, 3.75, -.46);
+  } else if (hairStyle === 'pony') {
+    if (gender === 'female') {
+      const pony = new THREE.Mesh(new THREE.CapsuleGeometry(.28, 1.25, 6, 11), hair);
+      pony.position.set(.38, 3.95, -.66);
+      pony.rotation.z = -.18;
+      pony.castShadow = true;
+      visual.add(pony);
+      [-1, 1].forEach((side) => {
+        const sideLayer = new THREE.Mesh(new THREE.CapsuleGeometry(.15, .85, 5, 9), hair);
+        sideLayer.position.set(side * .6, 4.05, -.04);
+        visual.add(sideLayer);
+      });
+    } else {
+      [-.58, -.36, -.12, .12, .36, .58].forEach((x, i) => {
+        const spike = new THREE.Mesh(new THREE.ConeGeometry(.14, .54 + (i % 2) * .14, 8), hair);
+        spike.position.set(x, 5.2 + (i % 2) * .06, -.02);
+        spike.rotation.z = -x * .48;
+        visual.add(spike);
+      });
+    }
+  } else if (gender === 'female') {
+    [-1, 1].forEach((side) => {
+      const sideLayer = new THREE.Mesh(new THREE.CapsuleGeometry(.18, 1.28, 5, 9), hair);
+      sideLayer.position.set(side * .61, 3.86, -.08);
+      sideLayer.rotation.z = side * -.05;
+      sideLayer.castShadow = true;
+      visual.add(sideLayer);
+    });
+    const backHair = new THREE.Mesh(new THREE.CapsuleGeometry(.46, 1.42, 6, 11), hair);
+    backHair.position.set(0, 3.78, -.48);
     backHair.scale.set(1.05, 1, .72);
     backHair.castShadow = true;
     visual.add(backHair);
   } else {
-    // Layered/spiked male hair.
-    [-.58, -.36, -.12, .12, .36, .58].forEach((x, i) => {
-      const spike = new THREE.Mesh(new THREE.ConeGeometry(.14, .48 + (i % 2) * .13, 8), hair);
-      spike.position.set(x, 5.18 + (i % 2) * .06, -.02);
-      spike.rotation.z = -x * .42;
+    [-.54, -.3, 0, .3, .54].forEach((x, i) => {
+      const spike = new THREE.Mesh(new THREE.ConeGeometry(.13, .4 + (i % 2) * .1, 8), hair);
+      spike.position.set(x, 5.14 + (i % 2) * .04, -.02);
+      spike.rotation.z = -x * .35;
       visual.add(spike);
-    });
-    [-1, 1].forEach((side) => {
-      const temple = new THREE.Mesh(new THREE.ConeGeometry(.13, .5, 8), hair);
-      temple.position.set(side * .68, 4.78, .04);
-      temple.rotation.z = side * -.7;
-      visual.add(temple);
     });
   }
 
@@ -1003,10 +1082,16 @@ function createAvatar(data, local = false) {
     fore.castShadow = true;
     pivot.add(fore);
 
-    const hand = new THREE.Mesh(new THREE.SphereGeometry(.15, 11, 8), skin);
+    const hand = new THREE.Mesh(new THREE.CapsuleGeometry(.115, .12, 4, 10), skin);
     hand.position.y = -1.43;
+    hand.scale.set(.9, 1.05, .72);
     hand.castShadow = true;
     pivot.add(hand);
+
+    const thumb = new THREE.Mesh(new THREE.SphereGeometry(.055, 9, 7), skin);
+    thumb.position.set(side * .105, -1.4, .015);
+    thumb.scale.set(.9, 1.1, .7);
+    pivot.add(thumb);
 
     visual.add(pivot);
     return pivot;
@@ -1026,10 +1111,18 @@ function createAvatar(data, local = false) {
     shin.castShadow = true;
     pivot.add(shin);
 
-    const shoe = new THREE.Mesh(new THREE.BoxGeometry(.38, .24, .68), shoes);
-    shoe.position.set(0, -1.58, .13);
+    const shoe = new THREE.Mesh(new THREE.CapsuleGeometry(.16, .34, 5, 12), shoes);
+    shoe.rotation.x = Math.PI / 2;
+    shoe.position.set(0, -1.58, .16);
+    shoe.scale.set(1.15, .72, 1.08);
     shoe.castShadow = true;
     pivot.add(shoe);
+
+    const sole = new THREE.Mesh(new THREE.CapsuleGeometry(.17, .35, 4, 10), material(0xe5e7eb, .7));
+    sole.rotation.x = Math.PI / 2;
+    sole.position.set(0, -1.67, .18);
+    sole.scale.set(1.16, .34, 1.08);
+    pivot.add(sole);
 
     visual.add(pivot);
     return pivot;
@@ -1094,11 +1187,19 @@ function makeNpcWalker(index, route, runner = false) {
   const outfits = ['sky', 'berry', 'mint', 'street', 'sunrise'];
   const names = ['Mika', 'Ari', 'Ken', 'Lia', 'Noah', 'Sora', 'Aya', 'Jin'];
   const start = route[index % route.length];
+  const npcHairStyles = ['classic', 'short', 'pony'];
+  const npcHairColors = ['espresso', 'chestnut', 'midnight'];
+  const npcSkinTones = ['light', 'warm', 'deep'];
+  const npcEyeColors = ['violet', 'ocean', 'hazel'];
   const mesh = createAvatar({
     id: 'npc-' + index,
     name: names[index % names.length],
     gender: index % 2 ? 'male' : 'female',
     outfit: outfits[index % outfits.length],
+    hairStyle: npcHairStyles[index % npcHairStyles.length],
+    hairColor: npcHairColors[(index + 1) % npcHairColors.length],
+    skinTone: npcSkinTones[index % npcSkinTones.length],
+    eyeColor: npcEyeColors[(index + 2) % npcEyeColors.length],
     x: start[0],
     y: 0,
     z: start[1],
@@ -1220,6 +1321,8 @@ function makeNpcCar(index, axis, lane, direction) {
     g.rotation.y = direction > 0 ? 0 : Math.PI;
   }
 
+  g.scale.set(1.34, 1.22, 1.34);
+
   if (MOBILE_PERF_MODE) {
     g.traverse((node) => {
       if (node.isMesh) node.castShadow = false;
@@ -1237,7 +1340,11 @@ function makeNpcCar(index, axis, lane, direction) {
     speed,
     currentSpeed: speed,
     wheels,
-    brakeMaterial
+    brakeMaterial,
+    blockedSince: 0,
+    hornCount: 0,
+    pendingReverse: false,
+    clearSince: 0
   });
 }
 
