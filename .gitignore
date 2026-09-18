@@ -1,0 +1,171 @@
+# First-3D-Game — hardened Git ignore rules
+# Never commit secrets, credentials, local state, dependencies, generated builds,
+# caches, logs, private keys, or IDE metadata.
+
+# Dependencies
+node_modules/
+**/node_modules/
+.pnp
+.pnp.js
+.pnp.cjs
+.yarn/cache/
+.yarn/unplugged/
+.yarn/build-state.yml
+.yarn/install-state.gz
+
+# Production/build output
+build/
+dist/
+**/dist/
+out/
+.next/
+.nuxt/
+.output/
+coverage/
+.nyc_output/
+*.tsbuildinfo
+
+# Environment variables / secrets
+.env
+.env.*
+!.env.example
+!.env.sample
+.envrc
+*.env
+*.secret
+*.secrets
+secrets/
+.secret/
+credentials/
+.private/
+
+# Private keys / certificates / signing material
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+*.keystore
+*.crt
+*.cer
+*.der
+*.csr
+*.mobileprovision
+id_rsa
+id_rsa.*
+id_ed25519
+id_ed25519.*
+
+# Cloud / deployment credentials
+.railway/
+.vercel/
+.netlify/
+.firebase/
+.gcloud/
+.aws/
+.azure/
+.kube/
+kubeconfig
+terraform.tfstate
+terraform.tfstate.*
+.terraform/
+*.tfvars
+*.tfvars.json
+
+# Local databases / runtime data
+*.db
+*.db-journal
+*.sqlite
+*.sqlite3
+*.sqlite-shm
+*.sqlite-wal
+*.rdb
+*.dump
+*.bak
+storage/
+uploads/
+private-uploads/
+
+# Logs and diagnostics
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+*.pid
+*.pid.lock
+*.seed
+
+# Test / tooling caches
+.cache/
+.parcel-cache/
+.eslintcache
+.stylelintcache
+.vite/
+.turbo/
+.nx/
+.svelte-kit/
+.playwright/
+test-results/
+playwright-report/
+
+# OS-generated files
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon?
+._*
+.Spotlight-V100
+.Trashes
+Thumbs.db
+Thumbs.db:encryptable
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# IDE / editor local files
+.idea/
+.vscode/
+!.vscode/extensions.json
+!.vscode/settings.example.json
+*.swp
+*.swo
+*~
+.project
+.classpath
+.settings/
+
+# Temporary files
+.tmp/
+tmp/
+temp/
+*.tmp
+*.temp
+*.cache
+
+# Package-manager caches
+.npm/
+.pnpm-store/
+
+# Local archives and exports
+*.zip
+*.tar
+*.tar.gz
+*.tgz
+*.7z
+*.rar
+
+# Misc sensitive local files
+.auth/
+.tokens/
+.token
+*.token
+*.credentials
+
+# Allow reproducible lockfiles
+!package-lock.json
+!npm-shrinkwrap.json
+!yarn.lock
+!pnpm-lock.yaml
