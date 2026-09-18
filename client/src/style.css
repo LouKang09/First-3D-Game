@@ -791,3 +791,81 @@ canvas { -webkit-touch-callout: none; }
 }
 .map-head span { display: inline; }
 .map-legend span { display: inline-flex; }
+
+/* Compact radar -> detailed map on desktop hover */
+@media (hover: hover) and (pointer: fine) and (min-width: 761px) {
+  .minimap {
+    width: 78px !important;
+    height: 78px;
+    min-width: 78px;
+    padding: 5px !important;
+    border-radius: 50% !important;
+    overflow: hidden;
+    transition: width .22s ease, height .22s ease, border-radius .22s ease, padding .22s ease !important;
+    cursor: crosshair;
+  }
+  .minimap .map-head,
+  .minimap .map-legend {
+    opacity: 0;
+    max-height: 0;
+    padding: 0;
+    overflow: hidden;
+    transition: opacity .16s ease, max-height .22s ease, padding .22s ease;
+  }
+  .minimap .map-canvas-wrap {
+    width: 68px;
+    height: 68px;
+    border-radius: 50% !important;
+    transition: width .22s ease, height .22s ease, border-radius .22s ease;
+  }
+  .minimap .map-canvas-wrap canvas {
+    width: 68px;
+    height: 68px;
+    border-radius: 50% !important;
+  }
+  .minimap:hover,
+  .minimap:focus-within {
+    width: 238px !important;
+    height: 294px;
+    padding: 9px !important;
+    border-radius: 22px !important;
+  }
+  .minimap:hover .map-head,
+  .minimap:focus-within .map-head {
+    opacity: 1;
+    max-height: 34px;
+    padding: 2px 4px 8px;
+  }
+  .minimap:hover .map-legend,
+  .minimap:focus-within .map-legend {
+    opacity: 1;
+    max-height: 32px;
+    padding: 8px 2px 1px;
+  }
+  .minimap:hover .map-canvas-wrap,
+  .minimap:focus-within .map-canvas-wrap {
+    width: 220px;
+    height: 220px;
+    border-radius: 15px !important;
+  }
+  .minimap:hover .map-canvas-wrap canvas,
+  .minimap:focus-within .map-canvas-wrap canvas {
+    width: 220px;
+    height: 220px;
+    border-radius: 0 !important;
+  }
+}
+@media (max-width: 760px), (pointer: coarse) {
+  .minimap {
+    width: 155px !important;
+    height: auto !important;
+    border-radius: 20px !important;
+    padding: 8px !important;
+  }
+  .minimap .map-canvas-wrap,
+  .minimap .map-canvas-wrap canvas {
+    width: 100% !important;
+    height: auto !important;
+    border-radius: 12px !important;
+  }
+}
