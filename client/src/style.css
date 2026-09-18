@@ -782,3 +782,12 @@ canvas { -webkit-touch-callout: none; }
   .map-legend { display: none; }
   .house-prompt { bottom: 108px; min-width: 250px; }
 }
+
+.map-head span,
+.map-legend span {
+  margin: 0;
+  letter-spacing: normal;
+  text-align: left;
+}
+.map-head span { display: inline; }
+.map-legend span { display: inline-flex; }
