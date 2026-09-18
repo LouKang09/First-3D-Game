@@ -143,6 +143,28 @@ app.get('/health', (_req, res) => {
   res.json({ ok: true, players: players.size, parties: parties.size });
 });
 
+app.get('/voice-config', (_req, res) => {
+  const iceServers = [
+    { urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302'] }
+  ];
+
+  const turnUrls = String(process.env.TURN_URLS || '')
+    .split(',')
+    .map((value) => value.trim())
+    .filter(Boolean);
+
+  if (turnUrls.length && process.env.TURN_USERNAME && process.env.TURN_CREDENTIAL) {
+    iceServers.push({
+      urls: turnUrls,
+      username: process.env.TURN_USERNAME,
+      credential: process.env.TURN_CREDENTIAL
+    });
+  }
+
+  res.setHeader('Cache-Control', 'no-store');
+  res.json({ iceServers });
+});
+
 io.on('connection', (socket) => {
   socket.on('player:join', (payload = {}) => {
     if (players.has(socket.id)) return;
@@ -323,6 +345,34 @@ io.on('connection', (socket) => {
   socket.on('party:leave', () => {
     leaveParty(socket.id);
     emitSocial();
+  });
+
+  socket.on('voice:ready', () => {
+    const player = players.get(socket.id);
+    if (!player || !player.partyId) return;
+
+    const party = parties.get(player.partyId);
+    if (!party) return;
+
+    for (const memberId of party.members) {
+      if (memberId !== socket.id) {
+        io.to(memberId).emit('voice:ready', { fromId: socket.id });
+      }
+    }
+  });
+
+  socket.on('voice:ready:ack', (payload = {}) => {
+    const player = players.get(socket.id);
+    const target = players.get(payload.targetId);
+
+    if (
+      !player ||
+      !player.partyId ||
+      !target ||
+      target.partyId !== player.partyId
+    ) return;
+
+    io.to(payload.targetId).emit('voice:ready:ack', { fromId: socket.id });
   });
 
   socket.on('voice:signal', (payload = {}) => {
