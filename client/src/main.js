@@ -28,9 +28,9 @@ app.innerHTML = [
             '<div id="outfit-options" class="outfit-options"></div>',
           '</div>',
         '</div>',
-        '<div class="avatar-note"><strong>Chibi style</strong><span>Big head · expressive eyes · compact proportions</span></div>',
+        '<div class="avatar-note"><strong>Anime style</strong><span>Stylized proportions · expressive eyes · layered hair</span></div>',
         '<button class="primary" type="submit">Enter Haven</button>',
-        '<p class="fine">WASD to move · Shift to run · Drag to look · E to interact</p>',
+        '<p class="fine">WASD to move · Hold Shift to sprint · Drag to look · Left-click players · E to interact</p>',
       '</form>',
     '</div>',
     '<div id="hud" class="hidden">',
@@ -41,10 +41,10 @@ app.innerHTML = [
           '<button id="zoom-in-btn" class="round glass zoom-control" title="Zoom in">+</button>',
           '<button id="home-btn" class="round glass" title="Go home">⌂</button>',
           '<button id="social-btn" class="round glass" title="Social">☻</button>',
-          '<button id="voice-btn" class="round glass" title="Party voice" disabled>♬</button>',
+          '<button id="voice-btn" class="round glass voice-control" title="Join a party to enable speaking" disabled>🎙</button>',
         '</div>',
       '</div>',
-      '<div id="status" class="status glass"><strong id="status-name">Guest</strong><span id="status-home">Home #1</span><div class="keys"><kbd>WASD</kbd> move <kbd>Shift</kbd> run <kbd>E</kbd> interact</div></div>',
+      '<div id="status" class="status glass"><strong id="status-name">Guest</strong><span id="status-home">Home #1</span><div class="keys"><kbd>WASD</kbd> move <kbd>Shift</kbd> sprint <kbd>Click</kbd> player <kbd>E</kbd> interact</div></div>',
       '<div id="prompt" class="prompt glass"><kbd>E</kbd><span id="prompt-text">Interact</span></div>',
       '<div class="minimap glass"><canvas id="map" width="250" height="250"></canvas><span>NEIGHBORHOOD</span></div>',
       '<aside id="social" class="social glass">',
@@ -53,6 +53,7 @@ app.innerHTML = [
         '<div id="social-body" class="social-body"></div>',
       '</aside>',
       '<div id="party-invite" class="invite glass hidden"><strong>Party invitation</strong><span id="invite-copy"></span><div><button id="join-party" class="small primary">Join</button><button id="dismiss-party" class="small">Not now</button></div></div>',
+      '<div id="player-popup" class="player-popup glass hidden" role="dialog" aria-label="Player actions"></div>',
       '<div id="toasts"></div>',
       '<div id="mobile-controls">',
         '<div id="joystick" class="joystick" aria-label="Movement joystick"><span class="joystick-label">MOVE</span><div id="stick"></div></div>',
@@ -95,6 +96,8 @@ let me = null;
 let socialState = null;
 let currentTab = 'nearby';
 let pendingPartyInvite = null;
+let pendingInviteAfterCreate = null;
+let selectedPlayerId = null;
 let lastNetworkSend = 0;
 let voiceEnabled = false;
 let localStream = null;
@@ -593,171 +596,218 @@ function createAvatar(data, local = false) {
   const visual = new THREE.Group();
   root.add(visual);
 
-  const skin = material(gender === 'female' ? 0xf2c3a2 : 0xeebc98, .7);
-  const hair = material(outfit.hair, .82);
-  const top = material(outfit.top, .58);
-  const top2 = material(outfit.top2, .64);
-  const bottom = material(outfit.bottom, .68);
-  const accent = material(outfit.accent, .6);
-  const shoes = material(outfit.shoes, .55);
-  const eyeMat = new THREE.MeshStandardMaterial({ color: 0x202631, roughness: .32 });
-  const whiteMat = material(0xffffff, .46);
+  const skin = material(gender === 'female' ? 0xf3c6a7 : 0xefbd9b, .68);
+  const hair = material(outfit.hair, .8);
+  const top = material(outfit.top, .55);
+  const top2 = material(outfit.top2, .6);
+  const bottom = material(outfit.bottom, .7);
+  const accent = material(outfit.accent, .55);
+  const shoes = material(outfit.shoes, .58);
+  const eyeDark = new THREE.MeshStandardMaterial({ color: 0x202638, roughness: .26 });
+  const eyeTint = new THREE.MeshStandardMaterial({ color: gender === 'female' ? 0x5d5f9b : 0x426c87, roughness: .24 });
+  const white = material(0xffffff, .42);
 
-  // Chibi reference proportions: head is almost half the total character height.
-  const head = new THREE.Mesh(new THREE.SphereGeometry(1.02, 26, 20), skin);
-  head.position.y = 3.55;
-  head.scale.set(.98, 1.05, .94);
+  // Anime-inspired proportions: stylized head, slim torso and longer limbs.
+  const head = new THREE.Mesh(new THREE.SphereGeometry(.72, 28, 22), skin);
+  head.position.y = 4.55;
+  head.scale.set(.92, 1.04, .88);
   head.castShadow = true;
   visual.add(head);
 
-  const cheekMat = new THREE.MeshBasicMaterial({ color: 0xe99b96, transparent: true, opacity: .45 });
-  [-.5, .5].forEach((x) => {
-    const cheek = new THREE.Mesh(new THREE.SphereGeometry(.11, 10, 8), cheekMat);
-    cheek.position.set(x, 3.42, .86);
-    cheek.scale.set(1.55, .7, .32);
-    visual.add(cheek);
-  });
+  // Slightly pointed chin silhouette.
+  const chin = new THREE.Mesh(new THREE.SphereGeometry(.43, 20, 14), skin);
+  chin.position.set(0, 4.17, .05);
+  chin.scale.set(.86, .72, .88);
+  chin.castShadow = true;
+  visual.add(chin);
 
-  [-.36, .36].forEach((x) => {
-    const eyeWhite = new THREE.Mesh(new THREE.SphereGeometry(.19, 13, 10), whiteMat);
-    eyeWhite.position.set(x, 3.66, .89);
-    eyeWhite.scale.set(.78, 1.08, .34);
+  // Large anime eyes with colored iris and catch lights.
+  [-.27, .27].forEach((x) => {
+    const eyeWhite = new THREE.Mesh(new THREE.SphereGeometry(.15, 14, 11), white);
+    eyeWhite.position.set(x, 4.58, .65);
+    eyeWhite.scale.set(1.0, .75, .28);
     visual.add(eyeWhite);
 
-    const eye = new THREE.Mesh(new THREE.SphereGeometry(.105, 12, 9), eyeMat);
-    eye.position.set(x, 3.66, .99);
-    eye.scale.set(.82, 1.18, .42);
-    visual.add(eye);
+    const iris = new THREE.Mesh(new THREE.SphereGeometry(.092, 13, 10), eyeTint);
+    iris.position.set(x, 4.57, .72);
+    iris.scale.set(.95, 1.1, .35);
+    visual.add(iris);
 
-    const sparkle = new THREE.Mesh(new THREE.SphereGeometry(.025, 7, 6), new THREE.MeshBasicMaterial({ color: 0xffffff }));
-    sparkle.position.set(x - .025, 3.72, 1.04);
-    visual.add(sparkle);
+    const pupil = new THREE.Mesh(new THREE.SphereGeometry(.045, 10, 8), eyeDark);
+    pupil.position.set(x, 4.57, .765);
+    pupil.scale.z = .38;
+    visual.add(pupil);
+
+    const shine = new THREE.Mesh(new THREE.SphereGeometry(.022, 7, 6), new THREE.MeshBasicMaterial({ color: 0xffffff }));
+    shine.position.set(x - .024, 4.63, .79);
+    visual.add(shine);
+
+    // Upper lash / eye line.
+    const lash = new THREE.Mesh(new THREE.BoxGeometry(.25, .025, .025), eyeDark);
+    lash.position.set(x, 4.7, .695);
+    lash.rotation.z = x < 0 ? -.08 : .08;
+    visual.add(lash);
   });
 
-  const mouthCurve = new THREE.Mesh(new THREE.TorusGeometry(.115, .018, 6, 18, Math.PI), new THREE.MeshBasicMaterial({ color: 0x8f5b5d }));
-  mouthCurve.position.set(0, 3.3, .99);
-  mouthCurve.rotation.z = Math.PI;
-  visual.add(mouthCurve);
+  const nose = new THREE.Mesh(new THREE.SphereGeometry(.035, 8, 6), material(0xd99f87, .8));
+  nose.position.set(0, 4.42, .72);
+  visual.add(nose);
 
-  // Full, soft hair cap with gender-specific silhouette.
-  const hairCap = new THREE.Mesh(new THREE.SphereGeometry(1.055, 24, 18, 0, Math.PI * 2, 0, Math.PI * .62), hair);
-  hairCap.position.set(0, 3.82, -.06);
-  hairCap.scale.set(1.02, .9, 1.01);
+  const mouth = new THREE.Mesh(new THREE.TorusGeometry(.095, .012, 5, 16, Math.PI), new THREE.MeshBasicMaterial({ color: 0x9b5960 }));
+  mouth.position.set(0, 4.27, .72);
+  mouth.rotation.z = Math.PI;
+  visual.add(mouth);
+
+  if (gender === 'female') {
+    [-.42, .42].forEach((x) => {
+      const blush = new THREE.Mesh(new THREE.SphereGeometry(.08, 9, 7), new THREE.MeshBasicMaterial({ color: 0xe69b9c, transparent: true, opacity: .28 }));
+      blush.position.set(x, 4.35, .67);
+      blush.scale.set(1.6, .5, .25);
+      visual.add(blush);
+    });
+  }
+
+  // Layered anime hair cap.
+  const hairCap = new THREE.Mesh(new THREE.SphereGeometry(.77, 26, 18, 0, Math.PI * 2, 0, Math.PI * .65), hair);
+  hairCap.position.set(0, 4.78, -.03);
+  hairCap.scale.set(1.02, .9, 1.02);
   hairCap.castShadow = true;
   visual.add(hairCap);
 
   const fringe = new THREE.Group();
-  [-.56, -.27, .02, .31, .58].forEach((x, i) => {
-    const lock = new THREE.Mesh(new THREE.ConeGeometry(.2, .62 + (i % 2) * .08, 8), hair);
-    lock.position.set(x, 4.08 - Math.abs(x) * .12, .73);
+  [-.48, -.25, 0, .25, .48].forEach((x, i) => {
+    const lock = new THREE.Mesh(new THREE.ConeGeometry(.13 + (i === 2 ? .03 : 0), .72 - Math.abs(x) * .22, 8), hair);
+    lock.position.set(x, 4.72 - Math.abs(x) * .08, .54);
     lock.rotation.x = Math.PI;
-    lock.rotation.z = x * .18;
+    lock.rotation.z = x * .28;
     fringe.add(lock);
   });
   visual.add(fringe);
 
   if (gender === 'female') {
+    // Long side layers and flowing back hair.
     [-1, 1].forEach((side) => {
-      const sideHair = new THREE.Mesh(new THREE.CapsuleGeometry(.28, .68, 5, 9), hair);
-      sideHair.position.set(side * .82, 3.17, -.06);
-      sideHair.rotation.z = side * -.08;
-      sideHair.castShadow = true;
-      visual.add(sideHair);
+      const sideLayer = new THREE.Mesh(new THREE.CapsuleGeometry(.18, 1.35, 5, 9), hair);
+      sideLayer.position.set(side * .61, 3.82, -.06);
+      sideLayer.rotation.z = side * -.06;
+      sideLayer.castShadow = true;
+      visual.add(sideLayer);
     });
-    const pony = new THREE.Mesh(new THREE.SphereGeometry(.42, 14, 10), hair);
-    pony.position.set(.78, 3.75, -.7);
-    pony.scale.set(.75, 1.25, .75);
-    pony.castShadow = true;
-    visual.add(pony);
-    const bow = new THREE.Mesh(new THREE.OctahedronGeometry(.23), accent);
-    bow.position.set(.7, 4.05, -.64);
-    visual.add(bow);
+    const backHair = new THREE.Mesh(new THREE.CapsuleGeometry(.48, 1.5, 6, 11), hair);
+    backHair.position.set(0, 3.75, -.46);
+    backHair.scale.set(1.05, 1, .72);
+    backHair.castShadow = true;
+    visual.add(backHair);
   } else {
-    [-.62, -.31, 0, .31, .62].forEach((x, i) => {
-      const spike = new THREE.Mesh(new THREE.ConeGeometry(.22, .48, 8), hair);
-      spike.position.set(x, 4.57 + (i % 2) * .08, -.05);
-      spike.rotation.z = -x * .36;
+    // Layered/spiked male hair.
+    [-.58, -.36, -.12, .12, .36, .58].forEach((x, i) => {
+      const spike = new THREE.Mesh(new THREE.ConeGeometry(.14, .48 + (i % 2) * .13, 8), hair);
+      spike.position.set(x, 5.18 + (i % 2) * .06, -.02);
+      spike.rotation.z = -x * .42;
       visual.add(spike);
+    });
+    [-1, 1].forEach((side) => {
+      const temple = new THREE.Mesh(new THREE.ConeGeometry(.13, .5, 8), hair);
+      temple.position.set(side * .68, 4.78, .04);
+      temple.rotation.z = side * -.7;
+      visual.add(temple);
     });
   }
 
-  // Compact rounded torso.
-  const torso = new THREE.Mesh(new THREE.CapsuleGeometry(.65, .72, 7, 12), top);
-  torso.position.y = 2.08;
-  torso.scale.set(gender === 'female' ? .92 : 1.02, 1, .8);
+  // Slim anime torso and waist.
+  const torso = new THREE.Mesh(new THREE.CapsuleGeometry(.48, 1.16, 7, 12), top);
+  torso.position.y = 3.15;
+  torso.scale.set(gender === 'female' ? .88 : 1.02, 1, .72);
   torso.castShadow = true;
   visual.add(torso);
 
-  // Outfit-specific overlay pieces make presets visibly different.
+  const waist = new THREE.Mesh(new THREE.CylinderGeometry(.4, .46, .5, 14), bottom);
+  waist.position.y = 2.25;
+  waist.castShadow = true;
+  visual.add(waist);
+
+  // Outfit details retained but re-shaped for the anime body.
   if (data.outfit === 'street') {
-    const jacket = new THREE.Mesh(new THREE.BoxGeometry(1.42, .9, .18), top2);
-    jacket.position.set(0, 2.18, .62);
+    const jacket = new THREE.Mesh(new THREE.BoxGeometry(1.02, .96, .14), top2);
+    jacket.position.set(0, 3.18, .46);
     jacket.castShadow = true;
     visual.add(jacket);
-    [-.36, .36].forEach((x) => {
-      const snap = new THREE.Mesh(new THREE.SphereGeometry(.055, 8, 6), accent);
-      snap.position.set(x, 2.15, .74);
-      visual.add(snap);
-    });
+    const zip = new THREE.Mesh(new THREE.BoxGeometry(.03, .82, .02), accent);
+    zip.position.set(0, 3.18, .55);
+    visual.add(zip);
   } else if (data.outfit === 'berry') {
-    const collar = new THREE.Mesh(new THREE.TorusGeometry(.38, .09, 8, 20, Math.PI), top2);
-    collar.position.set(0, 2.53, .56);
-    collar.rotation.z = Math.PI;
-    visual.add(collar);
+    const ribbon = new THREE.Mesh(new THREE.OctahedronGeometry(.16), accent);
+    ribbon.position.set(0, 3.55, .53);
+    ribbon.scale.set(1.55, .65, .45);
+    visual.add(ribbon);
   } else if (data.outfit === 'mint') {
-    const badge = new THREE.Mesh(new THREE.CircleGeometry(.16, 14), accent);
-    badge.position.set(.35, 2.25, .71);
+    const badge = new THREE.Mesh(new THREE.CircleGeometry(.13, 16), accent);
+    badge.position.set(.26, 3.22, .54);
     visual.add(badge);
   } else if (data.outfit === 'sunrise') {
-    const scarf = new THREE.Mesh(new THREE.TorusGeometry(.38, .105, 8, 20), accent);
-    scarf.position.set(0, 2.64, 0);
+    const scarf = new THREE.Mesh(new THREE.TorusGeometry(.28, .07, 8, 20), accent);
+    scarf.position.set(0, 3.75, .02);
     scarf.rotation.x = Math.PI / 2;
     visual.add(scarf);
   } else {
-    const pocket = new THREE.Mesh(new THREE.BoxGeometry(.38, .28, .08), top2);
-    pocket.position.set(.3, 2.05, .69);
-    visual.add(pocket);
+    const collarL = new THREE.Mesh(new THREE.BoxGeometry(.38, .12, .08), top2);
+    collarL.position.set(-.18, 3.63, .48);
+    collarL.rotation.z = -.35;
+    visual.add(collarL);
+    const collarR = collarL.clone();
+    collarR.position.x = .18;
+    collarR.rotation.z = .35;
+    visual.add(collarR);
   }
 
-  const hip = new THREE.Mesh(new THREE.CylinderGeometry(.52, .58, .42, 14), bottom);
-  hip.position.y = 1.39;
-  hip.castShadow = true;
-  visual.add(hip);
-
   if (gender === 'female') {
-    const skirt = new THREE.Mesh(new THREE.CylinderGeometry(.48, .72, .55, 16), bottom);
-    skirt.position.y = 1.28;
+    const skirt = new THREE.Mesh(new THREE.CylinderGeometry(.4, .58, .58, 18), bottom);
+    skirt.position.y = 2.0;
     skirt.castShadow = true;
     visual.add(skirt);
   }
 
   function makeArm(side) {
     const pivot = new THREE.Group();
-    pivot.position.set(side * .66, 2.37, 0);
-    const sleeve = new THREE.Mesh(new THREE.CapsuleGeometry(.17, .42, 4, 8), top2);
-    sleeve.position.y = -.28;
-    sleeve.castShadow = true;
-    pivot.add(sleeve);
-    const hand = new THREE.Mesh(new THREE.SphereGeometry(.2, 12, 9), skin);
-    hand.position.y = -.7;
+    pivot.position.set(side * .58, 3.55, 0);
+    const upper = new THREE.Mesh(new THREE.CapsuleGeometry(.13, .74, 4, 8), top2);
+    upper.position.y = -.47;
+    upper.castShadow = true;
+    pivot.add(upper);
+
+    const fore = new THREE.Mesh(new THREE.CapsuleGeometry(.115, .62, 4, 8), skin);
+    fore.position.y = -1.05;
+    fore.castShadow = true;
+    pivot.add(fore);
+
+    const hand = new THREE.Mesh(new THREE.SphereGeometry(.15, 11, 8), skin);
+    hand.position.y = -1.43;
     hand.castShadow = true;
     pivot.add(hand);
+
     visual.add(pivot);
     return pivot;
   }
 
   function makeLeg(side) {
     const pivot = new THREE.Group();
-    pivot.position.set(side * .28, 1.15, 0);
-    const leg = new THREE.Mesh(new THREE.CapsuleGeometry(.2, .48, 4, 8), bottom);
-    leg.position.y = -.34;
-    leg.castShadow = true;
-    pivot.add(leg);
-    const shoe = new THREE.Mesh(new THREE.SphereGeometry(.28, 12, 9), shoes);
-    shoe.position.set(0, -.76, .16);
-    shoe.scale.set(1.0, .58, 1.3);
+    pivot.position.set(side * .25, 2.15, 0);
+
+    const thigh = new THREE.Mesh(new THREE.CapsuleGeometry(.15, .74, 4, 8), bottom);
+    thigh.position.y = -.48;
+    thigh.castShadow = true;
+    pivot.add(thigh);
+
+    const shin = new THREE.Mesh(new THREE.CapsuleGeometry(.13, .72, 4, 8), gender === 'female' ? skin : bottom);
+    shin.position.y = -1.12;
+    shin.castShadow = true;
+    pivot.add(shin);
+
+    const shoe = new THREE.Mesh(new THREE.BoxGeometry(.38, .24, .68), shoes);
+    shoe.position.set(0, -1.58, .13);
     shoe.castShadow = true;
     pivot.add(shoe);
+
     visual.add(pivot);
     return pivot;
   }
@@ -768,11 +818,11 @@ function createAvatar(data, local = false) {
   const legR = makeLeg(1);
 
   const ring = new THREE.Mesh(
-    new THREE.RingGeometry(local ? .72 : .58, local ? .92 : .72, 32),
+    new THREE.RingGeometry(local ? .62 : .5, local ? .79 : .63, 32),
     new THREE.MeshBasicMaterial({
       color: local ? 0xffffff : new THREE.Color(outfit.top),
       transparent: true,
-      opacity: local ? .5 : .16,
+      opacity: local ? .5 : .14,
       side: THREE.DoubleSide,
       depthWrite: false
     })
@@ -782,19 +832,27 @@ function createAvatar(data, local = false) {
   root.add(ring);
 
   const name = makeTextSprite(data.name || 'Player', '#ffffff', local ? 'rgba(79,70,229,.9)' : 'rgba(17,24,39,.82)');
-  name.position.y = 5.05;
+  name.position.y = 5.72;
   name.scale.set(3.7, .92, 1);
   root.add(name);
 
   root.position.set(data.x || 0, 0, data.z || 0);
   root.rotation.y = data.rot || Math.PI;
   root.userData = {
+    playerId: data.id || null,
     visual, torso, head, armL, armR, legL, legR, groundRing: ring,
     moving: false,
+    sprinting: false,
     target: new THREE.Vector3(data.x || 0, 0, data.z || 0),
     targetRot: data.rot || Math.PI,
     local
   };
+
+  root.traverse((node) => {
+    node.userData.playerRoot = root;
+    node.userData.playerId = data.id || null;
+  });
+
   scene.add(root);
   return root;
 }
@@ -830,8 +888,9 @@ function updateLocal(delta) {
     forward /= Math.max(length, 1);
     strafe /= Math.max(length, 1);
 
-    const run = keys.has('ShiftLeft') || keys.has('ShiftRight');
-    const speed = run ? 9.5 : 5.6;
+    const sprinting = keys.has('ShiftLeft') || keys.has('ShiftRight');
+    const speed = sprinting ? 11.4 : 5.6;
+    me.userData.sprinting = sprinting;
     const sin = Math.sin(cameraYaw);
     const cos = Math.cos(cameraYaw);
 
@@ -848,35 +907,41 @@ function updateLocal(delta) {
   }
 
   me.userData.moving = moving;
+  if (!moving) me.userData.sprinting = false;
 }
 
 function updateAvatarAnimation(group, time, delta) {
   const moving = group.userData.moving;
-  const speed = moving ? 9.2 : 1.8;
+  const sprinting = Boolean(group.userData.sprinting);
+  const speed = moving ? (sprinting ? 13.5 : 9.0) : 1.6;
   const stride = Math.sin(time * speed);
-  const legAmp = moving ? 0.62 : 0.025;
-  const armAmp = moving ? 0.5 : 0.035;
+  const legAmp = moving ? (sprinting ? .82 : .58) : .018;
+  const armAmp = moving ? (sprinting ? .74 : .48) : .026;
 
   group.userData.legL.rotation.x = stride * legAmp;
   group.userData.legR.rotation.x = -stride * legAmp;
   group.userData.armL.rotation.x = -stride * armAmp;
   group.userData.armR.rotation.x = stride * armAmp;
 
-  const bob = moving ? Math.abs(Math.sin(time * speed * 2)) * 0.055 : Math.sin(time * 1.8) * 0.012;
-  group.position.y = THREE.MathUtils.lerp(group.position.y, bob, Math.min(1, delta * 12));
+  const bob = moving
+    ? Math.abs(Math.sin(time * speed * 2)) * (sprinting ? .075 : .045)
+    : Math.sin(time * 1.6) * .008;
+  group.position.y = THREE.MathUtils.lerp(group.position.y, bob, Math.min(1, delta * 13));
 
   group.userData.visual.rotation.z = THREE.MathUtils.lerp(
     group.userData.visual.rotation.z,
-    moving ? -stride * 0.025 : Math.sin(time * 1.1) * 0.008,
+    moving ? -stride * (sprinting ? .035 : .02) : Math.sin(time * 1.05) * .006,
     Math.min(1, delta * 8)
   );
+
   group.userData.torso.rotation.x = THREE.MathUtils.lerp(
     group.userData.torso.rotation.x,
-    moving ? 0.045 : 0,
-    Math.min(1, delta * 8)
+    sprinting ? .12 : moving ? .035 : 0,
+    Math.min(1, delta * 9)
   );
-  group.userData.head.rotation.y = Math.sin(time * 0.8 + (group.userData.local ? 0 : group.id || 0)) * 0.035;
-  group.userData.groundRing.rotation.z += delta * (group.userData.local ? 0.55 : 0.18);
+
+  group.userData.head.rotation.y = Math.sin(time * .72) * .025;
+  group.userData.groundRing.rotation.z += delta * (group.userData.local ? .55 : .18);
 }
 
 function updateCamera(delta) {
@@ -899,6 +964,7 @@ function updateRemote(delta, time) {
     remote.mesh.position.lerp(remote.mesh.userData.target, Math.min(1, delta * 9));
     remote.mesh.rotation.y = lerpAngle(remote.mesh.rotation.y, remote.mesh.userData.targetRot, Math.min(1, delta * 10));
     remote.mesh.userData.moving = Boolean(remote.data.moving);
+    remote.mesh.userData.sprinting = Boolean(remote.data.sprinting);
     updateAvatarAnimation(remote.mesh, time, delta);
   }
 }
@@ -945,23 +1011,76 @@ document.addEventListener('keyup', (event) => keys.delete(event.code));
 
 let dragging = false;
 let lastPointer = null;
+let pointerDownPoint = null;
+let pointerMoved = false;
+
+document.addEventListener('contextmenu', (event) => {
+  if (window.matchMedia('(pointer: fine)').matches) {
+    event.preventDefault();
+  }
+});
 
 renderer.domElement.addEventListener('pointerdown', (event) => {
+  if (event.button !== 0) return;
   dragging = true;
+  pointerMoved = false;
+  pointerDownPoint = { x: event.clientX, y: event.clientY };
   lastPointer = { x: event.clientX, y: event.clientY };
   renderer.domElement.setPointerCapture(event.pointerId);
 });
 
 renderer.domElement.addEventListener('pointermove', (event) => {
   if (!dragging || !lastPointer) return;
-  cameraYaw -= (event.clientX - lastPointer.x) * 0.005;
-  cameraPitch = THREE.MathUtils.clamp(cameraPitch + (event.clientY - lastPointer.y) * 0.004, 0.08, 0.75);
+
+  const totalDx = event.clientX - pointerDownPoint.x;
+  const totalDy = event.clientY - pointerDownPoint.y;
+  if (Math.hypot(totalDx, totalDy) > 5) pointerMoved = true;
+
+  if (pointerMoved) {
+    cameraYaw -= (event.clientX - lastPointer.x) * .005;
+    cameraPitch = THREE.MathUtils.clamp(
+      cameraPitch + (event.clientY - lastPointer.y) * .004,
+      .08,
+      .75
+    );
+  }
+
   lastPointer = { x: event.clientX, y: event.clientY };
 });
 
-renderer.domElement.addEventListener('pointerup', () => {
+renderer.domElement.addEventListener('pointerup', (event) => {
+  if (event.button !== 0) return;
+
+  const wasClick = !pointerMoved;
   dragging = false;
   lastPointer = null;
+  pointerDownPoint = null;
+
+  if (wasClick) {
+    const playerId = pickPlayerAt(event.clientX, event.clientY);
+    if (playerId) {
+      showPlayerPopup(playerId, event.clientX, event.clientY);
+    } else {
+      hidePlayerPopup();
+    }
+  }
+});
+
+renderer.domElement.addEventListener('pointercancel', () => {
+  dragging = false;
+  lastPointer = null;
+  pointerDownPoint = null;
+  pointerMoved = false;
+});
+
+document.addEventListener('pointerdown', (event) => {
+  if (
+    !playerPopup.classList.contains('hidden') &&
+    !playerPopup.contains(event.target) &&
+    event.target !== renderer.domElement
+  ) {
+    hidePlayerPopup();
+  }
 });
 
 renderer.domElement.addEventListener('wheel', (event) => {
@@ -1007,6 +1126,169 @@ document.querySelector('#join-form').addEventListener('submit', (event) => {
   socket.emit('player:join', { name, gender: selectedGender, outfit: selectedOutfit });
 });
 
+
+const playerPopup = document.querySelector('#player-popup');
+
+function hidePlayerPopup() {
+  selectedPlayerId = null;
+  playerPopup.classList.add('hidden');
+  playerPopup.innerHTML = '';
+}
+
+function isPartyMember(playerId) {
+  return Boolean(
+    socialState &&
+    socialState.party &&
+    socialState.party.members.some((member) => member.id === playerId)
+  );
+}
+
+function playerById(playerId) {
+  const remote = remotePlayers.get(playerId);
+  return remote ? remote.data : null;
+}
+
+function popupAction(label, handler, options = {}) {
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'player-action' + (options.primary ? ' primary-action' : '') + (options.danger ? ' danger-action' : '');
+  button.textContent = label;
+  button.disabled = Boolean(options.disabled);
+  button.addEventListener('click', (event) => {
+    event.stopPropagation();
+    if (!button.disabled) handler();
+  });
+  return button;
+}
+
+function showPlayerPopup(playerId, clientX, clientY) {
+  const player = playerById(playerId);
+  if (!player || !socialState) return;
+
+  selectedPlayerId = playerId;
+  const outfit = OUTFITS[player.outfit] || OUTFITS.sky;
+  const friend = isFriend(playerId);
+  const sameParty = isPartyMember(playerId);
+  const myParty = socialState.party;
+
+  playerPopup.innerHTML = '';
+
+  const header = document.createElement('div');
+  header.className = 'player-popup-header';
+  const portrait = document.createElement('div');
+  portrait.className = 'player-popup-avatar';
+  portrait.style.background = 'linear-gradient(145deg,' + outfit.top + ',' + outfit.bottom + ')';
+  portrait.textContent = player.gender === 'male' ? '♂' : '♀';
+
+  const identity = document.createElement('div');
+  const playerName = document.createElement('strong');
+  playerName.textContent = player.name;
+  const playerMeta = document.createElement('small');
+  playerMeta.textContent =
+    (player.gender === 'male' ? 'Male' : 'Female') +
+    ' · ' + outfit.name +
+    (friend ? ' · Friend' : '');
+  identity.append(playerName, playerMeta);
+
+  const close = document.createElement('button');
+  close.type = 'button';
+  close.className = 'player-popup-close';
+  close.textContent = '×';
+  close.addEventListener('click', hidePlayerPopup);
+
+  header.append(portrait, identity, close);
+
+  const actions = document.createElement('div');
+  actions.className = 'player-popup-actions';
+
+  if (!friend) {
+    actions.appendChild(popupAction('Add Friend', () => {
+      socket.emit('friend:request', playerId);
+      toast('Friend request sent to ' + player.name + '.');
+      hidePlayerPopup();
+    }, { primary: true }));
+  }
+
+  if (friend) {
+    actions.appendChild(popupAction('Live Together', () => {
+      socket.emit('roommate:request', playerId);
+      toast('Live-together invitation sent to ' + player.name + '.');
+      hidePlayerPopup();
+    }));
+  }
+
+  if (friend && !sameParty) {
+    if (!myParty) {
+      actions.appendChild(popupAction('Create Party & Invite', () => {
+        pendingInviteAfterCreate = playerId;
+        socket.emit('party:create');
+        toast('Creating a party for you and ' + player.name + '…');
+        hidePlayerPopup();
+      }, { primary: true }));
+    } else if (myParty.leaderId === selfId) {
+      actions.appendChild(popupAction('Invite to Party', () => {
+        socket.emit('party:invite', playerId);
+        toast('Party invitation sent to ' + player.name + '.');
+        hidePlayerPopup();
+      }, { primary: true }));
+    } else {
+      actions.appendChild(popupAction('Leader Invites Only', () => {}, { disabled: true }));
+    }
+  }
+
+  if (sameParty) {
+    actions.appendChild(popupAction(voiceEnabled ? 'Mute My Mic' : 'Enable Speaking', () => {
+      toggleVoice();
+      hidePlayerPopup();
+    }, { primary: !voiceEnabled }));
+  }
+
+  if (Number.isInteger(player.residenceHomeId) && homePositions[player.residenceHomeId]) {
+    actions.appendChild(popupAction('Visit Home', () => {
+      visitHouse(player.residenceHomeId);
+      hidePlayerPopup();
+    }));
+  }
+
+  const hint = document.createElement('div');
+  hint.className = 'player-popup-hint';
+  hint.textContent = sameParty
+    ? 'You are in the same party. Speaking can be enabled.'
+    : friend
+      ? 'Friends can live together and receive party invitations.'
+      : 'Become friends to unlock more social actions.';
+
+  playerPopup.append(header, actions, hint);
+  playerPopup.classList.remove('hidden');
+
+  const margin = 12;
+  const rect = playerPopup.getBoundingClientRect();
+  const left = Math.max(margin, Math.min(window.innerWidth - rect.width - margin, clientX + 14));
+  const top = Math.max(margin, Math.min(window.innerHeight - rect.height - margin, clientY + 14));
+  playerPopup.style.left = left + 'px';
+  playerPopup.style.top = top + 'px';
+}
+
+const raycaster = new THREE.Raycaster();
+const pointerNdc = new THREE.Vector2();
+
+function pickPlayerAt(clientX, clientY) {
+  if (!joined || remotePlayers.size === 0) return null;
+
+  const rect = renderer.domElement.getBoundingClientRect();
+  pointerNdc.x = ((clientX - rect.left) / rect.width) * 2 - 1;
+  pointerNdc.y = -((clientY - rect.top) / rect.height) * 2 + 1;
+  raycaster.setFromCamera(pointerNdc, camera);
+
+  const roots = Array.from(remotePlayers.values()).map((remote) => remote.mesh);
+  const hits = raycaster.intersectObjects(roots, true);
+  if (!hits.length) return null;
+
+  let object = hits[0].object;
+  while (object && !object.userData.playerId && object.parent) object = object.parent;
+  return object && object.userData.playerId ? object.userData.playerId : null;
+}
+
 function showHud() {
   document.querySelector('#join').classList.add('hidden');
   document.querySelector('#hud').classList.remove('hidden');
@@ -1015,6 +1297,7 @@ function showHud() {
 function addRemote(data) {
   if (!data || data.id === selfId || remotePlayers.has(data.id)) return;
   const mesh = createAvatar(data, false);
+  mesh.userData.playerId = data.id;
   mesh.userData.target.set(data.x || 0, 0, data.z || 0);
   mesh.userData.targetRot = data.rot || 0;
   remotePlayers.set(data.id, { mesh, data });
@@ -1056,7 +1339,9 @@ function updateHud() {
   document.querySelector('#online').textContent = total + (total === 1 ? ' online' : ' online');
   const voiceButton = document.querySelector('#voice-btn');
   voiceButton.disabled = !socialState.party;
-  voiceButton.title = socialState.party ? 'Party voice' : 'Join a party to enable voice';
+  voiceButton.title = socialState.party
+    ? (voiceEnabled ? 'Mute microphone' : 'Enable speaking')
+    : 'Join a party to enable speaking';
 }
 
 function isFriend(id) {
@@ -1267,7 +1552,7 @@ async function toggleVoice() {
     });
     voiceEnabled = true;
     document.querySelector('#voice-btn').classList.add('active');
-    toast('Party voice is on.');
+    toast('Speaking is enabled for your party.');
     await syncVoicePeers();
     renderSocial();
   } catch (error) {
@@ -1283,7 +1568,7 @@ function stopVoice() {
   peers.clear();
   document.querySelectorAll('audio[data-peer]').forEach((audio) => audio.remove());
   document.querySelector('#voice-btn').classList.remove('active');
-  toast('Party voice is off.');
+  toast('Your microphone is muted.');
   renderSocial();
 }
 
@@ -1410,6 +1695,7 @@ socket.on('player:update', (player) => {
 });
 
 socket.on('player:left', (id) => {
+  if (selectedPlayerId === id) hidePlayerPopup();
   const remote = remotePlayers.get(id);
   if (remote) {
     scene.remove(remote.mesh);
@@ -1421,9 +1707,27 @@ socket.on('player:left', (id) => {
 
 socket.on('social:state', (state) => {
   socialState = state;
+
+  if (
+    pendingInviteAfterCreate &&
+    state.party &&
+    state.party.leaderId === selfId &&
+    !state.party.members.some((member) => member.id === pendingInviteAfterCreate)
+  ) {
+    const targetId = pendingInviteAfterCreate;
+    pendingInviteAfterCreate = null;
+    socket.emit('party:invite', targetId);
+    const target = playerById(targetId);
+    if (target) toast('Party invitation sent to ' + target.name + '.');
+  }
+
   if (voiceEnabled && !state.party) stopVoice();
   updateHud();
   renderSocial();
+  if (selectedPlayerId) {
+    const selected = playerById(selectedPlayerId);
+    if (!selected) hidePlayerPopup();
+  }
   syncVoicePeers();
 });
 
@@ -1627,7 +1931,8 @@ function frame(now) {
         y: 0,
         z: me.position.z,
         rot: me.rotation.y,
-        moving: me.userData.moving
+        moving: me.userData.moving,
+        sprinting: me.userData.sprinting
       });
       lastNetworkSend = now;
     }
