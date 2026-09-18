@@ -555,6 +555,7 @@ for (let i = 0; i < 12; i += 1) {
 
 const CHUNK_SIZE = 96;
 const ACTIVE_CHUNK_RADIUS = MOBILE_PERF_MODE ? 1 : 2;
+let populationReady = false;
 let streamedCenterChunkX = null;
 let streamedCenterChunkZ = null;
 const chunkGroups = new Map();
@@ -804,7 +805,7 @@ function updateWorldStreaming(x, z, force = false) {
     if (!needed.has(key)) removeChunk(key);
   }
 
-  if (typeof updatePopulationZone === 'function') {
+  if (populationReady) {
     updatePopulationZone(centerX, centerZ);
   }
 }
@@ -1312,6 +1313,7 @@ function updatePopulationZone(chunkX, chunkZ) {
   });
 }
 
+populationReady = true;
 updatePopulationZone(0, 0);
 
 function trafficCharacters() {
