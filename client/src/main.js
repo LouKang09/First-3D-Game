@@ -45,8 +45,16 @@ app.innerHTML = [
         '</div>',
       '</div>',
       '<div id="status" class="status glass"><strong id="status-name">Guest</strong><span id="status-home">Home #1</span><div class="keys"><kbd>WASD</kbd> move <kbd>Shift</kbd> sprint <kbd>Click</kbd> player <kbd>E</kbd> interact</div></div>',
-      '<div id="prompt" class="prompt glass"><kbd>E</kbd><span id="prompt-text">Interact</span></div>',
-      '<div class="minimap glass"><canvas id="map" width="250" height="250"></canvas><span>NEIGHBORHOOD</span></div>',
+      '<div id="prompt" class="house-prompt glass">',
+        '<div class="house-prompt-icon">⌂</div>',
+        '<div class="house-prompt-copy"><small id="house-kicker">NEARBY HOME</small><strong id="prompt-text">Interact</strong><span id="house-distance"></span></div>',
+        '<kbd>E</kbd>',
+      '</div>',
+      '<div class="minimap glass">',
+        '<div class="map-head"><strong>LOCAL MAP</strong><span id="map-coords">0, 0</span></div>',
+        '<div class="map-canvas-wrap"><canvas id="map" width="320" height="320"></canvas><span class="map-north">N</span></div>',
+        '<div class="map-legend"><span><i class="legend-you"></i>You</span><span><i class="legend-house"></i>Home</span><span><i class="legend-tree"></i>Tree</span></div>',
+      '</div>',
       '<aside id="social" class="social glass">',
         '<header><div><small>SOCIAL</small><h2>Friends & Party</h2></div><button id="close-social">×</button></header>',
         '<div class="tabs"><button data-tab="nearby" class="active">Nearby</button><button data-tab="friends">Friends</button><button data-tab="party">Party</button></div>',
@@ -105,6 +113,21 @@ let joystick = { x: 0, y: 0 };
 
 const remotePlayers = new Map();
 const peers = new Map();
+const voiceReadyPeers = new Set();
+const pendingIceCandidates = new Map();
+const defaultIceServers = [
+  { urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302'] }
+];
+let rtcIceServers = defaultIceServers;
+
+fetch('/voice-config')
+  .then((response) => response.ok ? response.json() : null)
+  .then((config) => {
+    if (config && Array.isArray(config.iceServers) && config.iceServers.length) {
+      rtcIceServers = config.iceServers;
+    }
+  })
+  .catch(() => {});
 
 const worldEl = document.querySelector('#world');
 const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
@@ -321,11 +344,12 @@ function makeTree(x, z, scale = 1) {
   world.add(g);
 }
 
-[
+const centralTreePositions = [
   [-60, -58], [-60, -12], [-62, 34], [-36, 45], [-15, 58],
   [14, 34], [36, 25], [61, 15], [61, -35], [33, -61],
   [-31, -65], [16, -28], [-16, 28]
-].forEach((p, i) => makeTree(p[0], p[1], 0.9 + (i % 3) * 0.08));
+];
+centralTreePositions.forEach((p, i) => makeTree(p[0], p[1], 0.9 + (i % 3) * 0.08));
 
 function makeShrub(x, z, scale = 1, color = 0x4e8a50) {
   const shrub = new THREE.Mesh(new THREE.DodecahedronGeometry(0.85 * scale, 0), material(color, 1));
@@ -448,46 +472,108 @@ const CHUNK_SIZE = 96;
 const ACTIVE_CHUNK_RADIUS = 2;
 const chunkGroups = new Map();
 const proceduralHouses = new Map();
+const proceduralTrees = new Map();
 
 function seededValue(x, z, salt = 0) {
   const value = Math.sin(x * 127.1 + z * 311.7 + salt * 74.7) * 43758.5453123;
   return value - Math.floor(value);
 }
 
-function procHouse(parent, globalX, globalZ, localX, localZ, seed, key) {
+function procHouse(parent, globalX, globalZ, localX, localZ, seed, key, rotation = 0) {
   const house = new THREE.Group();
   house.position.set(localX, 0, localZ);
-  const walls = [0xf3cfba, 0xc9dced, 0xd8caeb, 0xc9e1cf, 0xead5a8][Math.floor(seededValue(seed, 0, 1) * 5)];
-  const roof = [0x624a43, 0x4a5768, 0x5b4a68, 0x52604b][Math.floor(seededValue(seed, 0, 2) * 4)];
-  const trim = 0xf5f2e9;
+  house.rotation.y = rotation;
 
-  cube(11.4, 0.38, 9.5, 0xbab5aa, 0, 0.2, 0, house);
-  cube(10.8, 5.8, 9.0, walls, 0, 3.1, 0, house);
-  const roofMesh = new THREE.Mesh(new THREE.ConeGeometry(7.5, 4.0, 4), material(roof, .84));
-  roofMesh.position.y = 7.35;
-  roofMesh.rotation.y = Math.PI / 4;
-  roofMesh.castShadow = true;
-  house.add(roofMesh);
+  const wallPalette = [0xf2cbb5, 0xc7d9ed, 0xdcc9eb, 0xc9dfcd, 0xecd8ac, 0xd8c9be];
+  const roofPalette = [0x654b43, 0x49586a, 0x5d4c68, 0x4e604e, 0x735249];
+  const walls = wallPalette[Math.floor(seededValue(seed, 0, 1) * wallPalette.length)];
+  const roofColor = roofPalette[Math.floor(seededValue(seed, 0, 2) * roofPalette.length)];
+  const trim = 0xf8f5ed;
+  const style = Math.floor(seededValue(seed, 0, 4) * 3);
 
-  cube(2.0, 3.65, .28, 0x704e3a, 0, 2.0, 4.57, house);
-  [-3.1, 3.1].forEach((wx) => {
-    cube(2.3, 2.0, .2, trim, wx, 3.3, 4.62, house);
-    cube(1.92, 1.62, .24, 0x9fd7e9, wx, 3.3, 4.76, house);
-  });
-  cube(2.0, .12, 4.0, 0xd5cfc2, 0, .08, 7.0, house);
+  // Clearly defined private lot: lawn pad + walkway + driveway.
+  cube(17.5, .08, 18.5, 0x76a86c, 0, .035, 0, house);
+  cube(3.0, .1, 9.0, 0xd2ccc0, 0, .09, 8.0, house);
+  cube(4.4, .11, 9.0, 0xbdb8b0, style === 1 ? 4.5 : -4.5, .095, 8.0, house);
 
-  if (seededValue(seed, 0, 3) > .45) {
-    cube(2.4, .75, .85, 0x4f8051, -3.6, .5, 5.1, house);
-    cube(2.4, .75, .85, 0x4f8051, 3.6, .5, 5.1, house);
+  // Foundation and primary living volume.
+  cube(12.2, .48, 10.2, 0xb7b1a8, 0, .24, 0, house);
+  cube(11.5, style === 1 ? 6.2 : 5.8, 9.4, walls, 0, style === 1 ? 3.35 : 3.15, 0, house);
+
+  // A projecting front bay breaks the box silhouette.
+  const bayX = style === 2 ? 2.65 : -2.65;
+  cube(4.3, 4.4, 2.4, walls, bayX, 2.45, 5.0, house);
+
+  // Main pitched roof.
+  const roof = new THREE.Mesh(new THREE.ConeGeometry(8.0, 4.25, 4), material(roofColor, .82));
+  roof.position.y = style === 1 ? 8.35 : 7.85;
+  roof.rotation.y = Math.PI / 4;
+  roof.castShadow = true;
+  house.add(roof);
+
+  // Front gable over the projecting bay.
+  const gable = new THREE.Mesh(new THREE.ConeGeometry(3.2, 2.25, 4), material(roofColor, .82));
+  gable.position.set(bayX, 5.55, 5.0);
+  gable.rotation.y = Math.PI / 4;
+  gable.castShadow = true;
+  house.add(gable);
+
+  // Two-storey variant gets an upper facade and balcony.
+  if (style === 1) {
+    cube(7.8, 2.3, 7.5, walls, 0, 6.15, -.25, house);
+    cube(6.0, .22, 1.55, 0xd1cbc0, 0, 5.05, 5.05, house);
+    [-2.7, 2.7].forEach((x) => cube(.16, 1.25, .16, trim, x, 5.65, 5.55, house));
+    cube(5.7, .12, .12, trim, 0, 6.22, 5.55, house);
   }
 
-  const plate = makeTextSprite('HOUSE', '#ffffff', 'rgba(31,41,55,.74)');
-  plate.position.set(0, 9.4, 0);
-  plate.scale.set(3.2, .8, 1);
+  // Porch + columns + front door.
+  cube(5.5, .28, 3.0, 0xb9b3a9, 0, .18, 5.8, house);
+  cube(4.8, .22, 2.1, roofColor, 0, 4.9, 5.7, house);
+  [-1.9, 1.9].forEach((x) => cube(.18, 3.8, .18, trim, x, 2.8, 6.05, house));
+  cube(2.05, 3.65, .28, 0x704d3a, 0, 2.05, 4.84, house);
+  cube(2.42, .18, .32, trim, 0, 3.95, 4.94, house);
+  cube(.16, 3.9, .3, trim, -1.12, 2.05, 4.93, house);
+  cube(.16, 3.9, .3, trim, 1.12, 2.05, 4.93, house);
+
+  // Front windows with trim and shutters.
+  [-3.75, 3.75].forEach((wx) => {
+    cube(2.35, 2.05, .18, trim, wx, 3.25, 4.79, house);
+    cube(1.94, 1.65, .22, 0x91cfe5, wx, 3.25, 4.91, house);
+    cube(.11, 1.65, .25, trim, wx, 3.25, 5.03, house);
+    cube(1.94, .11, .25, trim, wx, 3.25, 5.04, house);
+    cube(.26, 1.75, .18, roofColor, wx - 1.16, 3.25, 4.96, house);
+    cube(.26, 1.75, .18, roofColor, wx + 1.16, 3.25, 4.96, house);
+  });
+
+  // Side windows make the structure read as a full house from orbiting views.
+  [-1, 1].forEach((side) => {
+    cube(.18, 1.75, 2.15, trim, side * 5.79, 3.1, -.8, house);
+    cube(.2, 1.42, 1.78, 0x91cfe5, side * 5.91, 3.1, -.8, house);
+  });
+
+  // Chimney, flower beds and garden details.
+  cube(1.0, 3.0, 1.0, 0x82665a, 3.55, style === 1 ? 8.4 : 7.6, -1.5, house);
+  [-3.9, 3.9].forEach((x) => {
+    cube(2.4, .58, .75, 0x4f7f4e, x, .43, 5.2, house);
+    const flowers = new THREE.Mesh(new THREE.SphereGeometry(.32, 9, 7), material(x < 0 ? 0xe89bb7 : 0xf0c76b, .8));
+    flowers.position.set(x, .9, 5.25);
+    house.add(flowers);
+  });
+
+  const porchLight = new THREE.Mesh(
+    new THREE.SphereGeometry(.14, 10, 8),
+    new THREE.MeshStandardMaterial({ color: 0xffefb8, emissive: 0xffc85d, emissiveIntensity: 1.5 })
+  );
+  porchLight.position.set(1.45, 3.85, 5.08);
+  house.add(porchLight);
+
+  const plate = makeTextSprite('HOUSE', '#ffffff', 'rgba(31,41,55,.72)');
+  plate.position.set(0, style === 1 ? 10.6 : 9.9, 0);
+  plate.scale.set(3.0, .75, 1);
   house.add(plate);
 
   parent.add(house);
-  proceduralHouses.set(key, { id: key, x: globalX, z: globalZ, group: house });
+  proceduralHouses.set(key, { id: key, x: globalX, z: globalZ, group: house, style });
 }
 
 function createChunk(cx, cz) {
@@ -505,10 +591,11 @@ function createChunk(cx, cz) {
 
   const ground = new THREE.Mesh(new THREE.PlaneGeometry(CHUNK_SIZE + .6, CHUNK_SIZE + .6), material(0x86b77a, 1));
   ground.rotation.x = -Math.PI / 2;
-  ground.position.y = -0.015;
+  ground.position.y = -.015;
   ground.receiveShadow = true;
   group.add(ground);
 
+  // Cross-street grid. Houses are deliberately kept 27+ units from either road center.
   cube(16, .08, CHUNK_SIZE, 0x4d5561, 0, .035, 0, group);
   cube(CHUNK_SIZE, .08, 16, 0x4d5561, 0, .036, 0, group);
   cube(2.1, .13, CHUNK_SIZE, 0xd7d3ca, -9.2, .065, 0, group);
@@ -522,30 +609,61 @@ function createChunk(cx, cz) {
   }
 
   const lots = [
-    [-27, -27], [27, -27], [-27, 27], [27, 27]
+    { x: -31, z: -30, face: 'x' },
+    { x: 31, z: -30, face: 'z' },
+    { x: -31, z: 30, face: 'z' },
+    { x: 31, z: 30, face: 'x' }
   ];
+
   lots.forEach((lot, i) => {
-    const jx = (seededValue(cx, cz, 10 + i) - .5) * 7;
-    const jz = (seededValue(cx, cz, 20 + i) - .5) * 7;
-    const lx = lot[0] + jx;
-    const lz = lot[1] + jz;
+    const tangentJitter = (seededValue(cx, cz, 10 + i) - .5) * 5.0;
+    const lx = lot.face === 'x' ? lot.x : lot.x + tangentJitter;
+    const lz = lot.face === 'z' ? lot.z : lot.z + tangentJitter;
+    const rotation = lot.face === 'x'
+      ? (lx < 0 ? Math.PI / 2 : -Math.PI / 2)
+      : (lz < 0 ? 0 : Math.PI);
+
     const houseKey = key + ':h' + i;
-    procHouse(group, originX + lx, originZ + lz, lx, lz, cx * 97 + cz * 193 + i * 31, houseKey);
+    procHouse(
+      group,
+      originX + lx,
+      originZ + lz,
+      lx,
+      lz,
+      cx * 97 + cz * 193 + i * 31,
+      houseKey,
+      rotation
+    );
   });
 
-  for (let i = 0; i < 10; i += 1) {
-    let lx = (seededValue(cx, cz, 100 + i * 2) - .5) * 82;
-    let lz = (seededValue(cx, cz, 101 + i * 2) - .5) * 82;
-    if (Math.abs(lx) < 13) lx += lx < 0 ? -16 : 16;
-    if (Math.abs(lz) < 13) lz += lz < 0 ? -16 : 16;
-    const trunk = new THREE.Mesh(new THREE.CylinderGeometry(.26, .38, 2.7, 8), material(0x755238));
-    trunk.position.set(lx, 1.35, lz);
+  // Trees occupy lawn areas, never road/sidewalk corridors or house footprints.
+  for (let i = 0; i < 12; i += 1) {
+    let lx = (seededValue(cx, cz, 100 + i * 2) - .5) * 84;
+    let lz = (seededValue(cx, cz, 101 + i * 2) - .5) * 84;
+    if (Math.abs(lx) < 15) lx = (lx < 0 ? -1 : 1) * (17 + seededValue(cx, cz, 300 + i) * 8);
+    if (Math.abs(lz) < 15) lz = (lz < 0 ? -1 : 1) * (17 + seededValue(cx, cz, 400 + i) * 8);
+
+    const tooCloseToHouse = lots.some((lot) => Math.hypot(lx - lot.x, lz - lot.z) < 11);
+    if (tooCloseToHouse) continue;
+
+    const scale = .82 + seededValue(cx, cz, 200 + i) * .38;
+    const trunk = new THREE.Mesh(new THREE.CylinderGeometry(.28 * scale, .4 * scale, 2.9 * scale, 9), material(0x755238));
+    trunk.position.set(lx, 1.45 * scale, lz);
     trunk.castShadow = true;
     group.add(trunk);
-    const leaves = new THREE.Mesh(new THREE.DodecahedronGeometry(1.35 + seededValue(cx, cz, 200 + i) * .45), material(0x3f7b49, 1));
-    leaves.position.set(lx, 3.4, lz);
-    leaves.castShadow = true;
-    group.add(leaves);
+
+    const canopy = new THREE.Group();
+    const leafMat = material(i % 3 === 0 ? 0x467f49 : 0x397746, 1);
+    [[0, 0, 0, 1.45], [-.9, -.2, .15, .92], [.9, -.18, -.12, .95]].forEach((v) => {
+      const leaf = new THREE.Mesh(new THREE.DodecahedronGeometry(v[3] * scale, 0), leafMat);
+      leaf.position.set(v[0] * scale, v[1] * scale, v[2] * scale);
+      leaf.castShadow = true;
+      canopy.add(leaf);
+    });
+    canopy.position.set(lx, 3.8 * scale, lz);
+    group.add(canopy);
+
+    proceduralTrees.set(key + ':t' + i, { x: originX + lx, z: originZ + lz, scale });
   }
 
   chunkGroups.set(key, group);
@@ -564,6 +682,9 @@ function removeChunk(key) {
   chunkGroups.delete(key);
   for (const houseKey of proceduralHouses.keys()) {
     if (houseKey.startsWith(key + ':')) proceduralHouses.delete(houseKey);
+  }
+  for (const treeKey of proceduralTrees.keys()) {
+    if (treeKey.startsWith(key + ':')) proceduralTrees.delete(treeKey);
   }
 }
 
@@ -1010,23 +1131,34 @@ document.addEventListener('keydown', (event) => {
 document.addEventListener('keyup', (event) => keys.delete(event.code));
 
 let dragging = false;
+let dragButton = null;
 let lastPointer = null;
 let pointerDownPoint = null;
 let pointerMoved = false;
+let rightHoldReady = false;
+let rightHoldTimer = null;
 
 document.addEventListener('contextmenu', (event) => {
-  if (window.matchMedia('(pointer: fine)').matches) {
-    event.preventDefault();
-  }
+  if (window.matchMedia('(pointer: fine)').matches) event.preventDefault();
 });
 
 renderer.domElement.addEventListener('pointerdown', (event) => {
-  if (event.button !== 0) return;
+  if (event.button !== 0 && event.button !== 2) return;
+
   dragging = true;
+  dragButton = event.button;
   pointerMoved = false;
+  rightHoldReady = false;
   pointerDownPoint = { x: event.clientX, y: event.clientY };
   lastPointer = { x: event.clientX, y: event.clientY };
   renderer.domElement.setPointerCapture(event.pointerId);
+
+  if (event.button === 2) {
+    rightHoldTimer = window.setTimeout(() => {
+      rightHoldReady = true;
+      renderer.domElement.style.cursor = 'grabbing';
+    }, 180);
+  }
 });
 
 renderer.domElement.addEventListener('pointermove', (event) => {
@@ -1034,9 +1166,14 @@ renderer.domElement.addEventListener('pointermove', (event) => {
 
   const totalDx = event.clientX - pointerDownPoint.x;
   const totalDy = event.clientY - pointerDownPoint.y;
-  if (Math.hypot(totalDx, totalDy) > 5) pointerMoved = true;
 
-  if (pointerMoved) {
+  if (dragButton === 0 && Math.hypot(totalDx, totalDy) > 5) {
+    pointerMoved = true;
+  }
+
+  const canRotate = dragButton === 0 ? pointerMoved : rightHoldReady;
+  if (canRotate) {
+    pointerMoved = true;
     cameraYaw -= (event.clientX - lastPointer.x) * .005;
     cameraPitch = THREE.MathUtils.clamp(
       cameraPitch + (event.clientY - lastPointer.y) * .004,
@@ -1049,28 +1186,38 @@ renderer.domElement.addEventListener('pointermove', (event) => {
 });
 
 renderer.domElement.addEventListener('pointerup', (event) => {
-  if (event.button !== 0) return;
+  if (event.button !== dragButton) return;
 
-  const wasClick = !pointerMoved;
+  if (rightHoldTimer) {
+    clearTimeout(rightHoldTimer);
+    rightHoldTimer = null;
+  }
+
+  const wasLeftClick = dragButton === 0 && !pointerMoved;
   dragging = false;
+  dragButton = null;
   lastPointer = null;
   pointerDownPoint = null;
+  rightHoldReady = false;
+  renderer.domElement.style.cursor = '';
 
-  if (wasClick) {
+  if (wasLeftClick) {
     const playerId = pickPlayerAt(event.clientX, event.clientY);
-    if (playerId) {
-      showPlayerPopup(playerId, event.clientX, event.clientY);
-    } else {
-      hidePlayerPopup();
-    }
+    if (playerId) showPlayerPopup(playerId, event.clientX, event.clientY);
+    else hidePlayerPopup();
   }
 });
 
 renderer.domElement.addEventListener('pointercancel', () => {
+  if (rightHoldTimer) clearTimeout(rightHoldTimer);
+  rightHoldTimer = null;
   dragging = false;
+  dragButton = null;
   lastPointer = null;
   pointerDownPoint = null;
   pointerMoved = false;
+  rightHoldReady = false;
+  renderer.domElement.style.cursor = '';
 });
 
 document.addEventListener('pointerdown', (event) => {
@@ -1502,7 +1649,10 @@ function renderSocial() {
 
       const voiceNote = document.createElement('div');
       voiceNote.className = 'voice-note';
-      voiceNote.textContent = voiceEnabled ? 'Party voice is active. Your microphone is shared only with current party peers.' : 'Use the music-note button above to enable party voice.';
+      const connectedPeers = Array.from(peers.values()).filter((pc) => pc.connectionState === 'connected').length;
+      voiceNote.textContent = voiceEnabled
+        ? 'Microphone on · ' + connectedPeers + ' voice connection(s). Other party members must also enable speaking.'
+        : 'Tap the microphone button above to enable speaking. Voice is limited to your party.';
       body.appendChild(voiceNote);
     }
   }
@@ -1545,116 +1695,254 @@ async function toggleVoice() {
     return;
   }
 
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    toast('This browser does not support microphone voice chat.');
+    return;
+  }
+
   try {
     localStream = await navigator.mediaDevices.getUserMedia({
-      audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+      audio: {
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true,
+        channelCount: 1
+      },
       video: false
     });
+
     voiceEnabled = true;
+    voiceReadyPeers.clear();
     document.querySelector('#voice-btn').classList.add('active');
-    toast('Speaking is enabled for your party.');
+    toast('Speaking enabled. Waiting for party members to enable their microphone…');
+
+    socket.emit('voice:ready');
     await syncVoicePeers();
     renderSocial();
   } catch (error) {
-    toast('Microphone access was not granted.');
+    console.warn('Microphone error', error);
+    toast('Microphone access failed. Check browser site permissions and try again.');
   }
 }
 
 function stopVoice() {
   voiceEnabled = false;
+  voiceReadyPeers.clear();
+  pendingIceCandidates.clear();
+
   if (localStream) localStream.getTracks().forEach((track) => track.stop());
   localStream = null;
+
   peers.forEach((pc) => pc.close());
   peers.clear();
-  document.querySelectorAll('audio[data-peer]').forEach((audio) => audio.remove());
+
+  document.querySelectorAll('audio[data-peer]').forEach((audio) => {
+    audio.srcObject = null;
+    audio.remove();
+  });
+
   document.querySelector('#voice-btn').classList.remove('active');
   toast('Your microphone is muted.');
   renderSocial();
 }
 
-async function createPeer(peerId, initiator) {
-  if (!localStream || peers.has(peerId)) return peers.get(peerId);
+async function createPeer(peerId) {
+  if (!localStream) return null;
+  if (peers.has(peerId)) return peers.get(peerId);
 
-  const pc = new RTCPeerConnection({
-    iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+  const pc = new RTCPeerConnection({ iceServers: rtcIceServers });
+  peers.set(peerId, pc);
+
+  localStream.getAudioTracks().forEach((track) => {
+    pc.addTrack(track, localStream);
   });
 
-  peers.set(peerId, pc);
-  localStream.getTracks().forEach((track) => pc.addTrack(track, localStream));
-
   pc.onicecandidate = (event) => {
-    if (event.candidate) socket.emit('voice:signal', { targetId: peerId, candidate: event.candidate });
+    if (event.candidate) {
+      socket.emit('voice:signal', { targetId: peerId, candidate: event.candidate });
+    }
   };
 
   pc.ontrack = (event) => {
     let audio = document.querySelector('audio[data-peer="' + peerId + '"]');
+
     if (!audio) {
       audio = document.createElement('audio');
       audio.dataset.peer = peerId;
       audio.autoplay = true;
       audio.playsInline = true;
+      audio.muted = false;
+      audio.volume = 1;
       document.body.appendChild(audio);
     }
-    audio.srcObject = event.streams[0];
+
+    const stream = event.streams && event.streams[0]
+      ? event.streams[0]
+      : new MediaStream([event.track]);
+
+    audio.srcObject = stream;
+    audio.play().catch(() => {
+      toast('Party audio was blocked by the browser. Tap the microphone button off and on once.');
+    });
   };
 
   pc.onconnectionstatechange = () => {
-    if (['failed', 'closed', 'disconnected'].includes(pc.connectionState)) {
+    if (pc.connectionState === 'connected' && !pc.__connectedNotice) {
+      pc.__connectedNotice = true;
+      const player = playerById(peerId);
+      toast('Voice connected' + (player ? ' with ' + player.name : '') + '.');
+      renderSocial();
+    }
+
+    if (pc.connectionState === 'failed' || pc.connectionState === 'closed') {
       pc.close();
       peers.delete(peerId);
+      pendingIceCandidates.delete(peerId);
+
       const audio = document.querySelector('audio[data-peer="' + peerId + '"]');
       if (audio) audio.remove();
+
+      if (voiceEnabled && isPartyMember(peerId)) {
+        window.setTimeout(() => socket.emit('voice:ready'), 700);
+      }
+    }
+
+    if (pc.connectionState === 'disconnected') {
+      window.setTimeout(() => {
+        if (pc.connectionState === 'disconnected') {
+          pc.close();
+          peers.delete(peerId);
+          if (voiceEnabled && isPartyMember(peerId)) socket.emit('voice:ready');
+        }
+      }, 3500);
     }
   };
 
-  if (initiator) {
-    const offer = await pc.createOffer();
-    await pc.setLocalDescription(offer);
-    socket.emit('voice:signal', { targetId: peerId, description: pc.localDescription });
-  }
-
   return pc;
+}
+
+async function startVoiceOffer(peerId) {
+  if (!voiceEnabled || !voiceReadyPeers.has(peerId)) return;
+  const pc = await createPeer(peerId);
+  if (!pc || pc.signalingState !== 'stable') return;
+
+  const offer = await pc.createOffer({ offerToReceiveAudio: true });
+  await pc.setLocalDescription(offer);
+  socket.emit('voice:signal', {
+    targetId: peerId,
+    description: pc.localDescription
+  });
+}
+
+async function flushPendingIce(peerId, pc) {
+  const queue = pendingIceCandidates.get(peerId) || [];
+  pendingIceCandidates.delete(peerId);
+
+  for (const candidate of queue) {
+    try {
+      await pc.addIceCandidate(candidate);
+    } catch (error) {
+      console.warn('ICE candidate error', error);
+    }
+  }
+}
+
+function maybeStartVoiceConnection(peerId) {
+  if (
+    !voiceEnabled ||
+    !voiceReadyPeers.has(peerId) ||
+    !isPartyMember(peerId)
+  ) return;
+
+  // One deterministic initiator prevents offer glare.
+  if (String(selfId) < String(peerId)) {
+    startVoiceOffer(peerId).catch((error) => console.warn('Voice offer error', error));
+  }
 }
 
 async function syncVoicePeers() {
   if (!voiceEnabled || !socialState || !socialState.party) return;
 
-  const memberIds = socialState.party.members.map((member) => member.id).filter((id) => id !== selfId);
-
-  for (const id of memberIds) {
-    if (!peers.has(id) && String(selfId) < String(id)) await createPeer(id, true);
-  }
+  const memberIds = socialState.party.members
+    .map((member) => member.id)
+    .filter((id) => id !== selfId);
 
   for (const [id, pc] of peers) {
     if (!memberIds.includes(id)) {
       pc.close();
       peers.delete(id);
+      voiceReadyPeers.delete(id);
+      pendingIceCandidates.delete(id);
       const audio = document.querySelector('audio[data-peer="' + id + '"]');
       if (audio) audio.remove();
     }
   }
+
+  // Re-announce every time party state changes so late microphone activations reconnect.
+  socket.emit('voice:ready');
 }
 
 document.querySelector('#voice-btn').addEventListener('click', toggleVoice);
+
+socket.on('voice:ready', ({ fromId } = {}) => {
+  if (
+    !fromId ||
+    !voiceEnabled ||
+    !socialState ||
+    !socialState.party ||
+    !socialState.party.members.some((member) => member.id === fromId)
+  ) return;
+
+  voiceReadyPeers.add(fromId);
+  socket.emit('voice:ready:ack', { targetId: fromId });
+  maybeStartVoiceConnection(fromId);
+});
+
+socket.on('voice:ready:ack', ({ fromId } = {}) => {
+  if (
+    !fromId ||
+    !voiceEnabled ||
+    !socialState ||
+    !socialState.party ||
+    !socialState.party.members.some((member) => member.id === fromId)
+  ) return;
+
+  voiceReadyPeers.add(fromId);
+  maybeStartVoiceConnection(fromId);
+});
 
 socket.on('voice:signal', async (payload) => {
   if (!voiceEnabled || !socialState || !socialState.party) return;
   if (!socialState.party.members.some((member) => member.id === payload.fromId)) return;
 
-  let pc = peers.get(payload.fromId);
-  if (!pc) pc = await createPeer(payload.fromId, false);
-  if (!pc) return;
-
   try {
+    const pc = await createPeer(payload.fromId);
+    if (!pc) return;
+
     if (payload.description) {
       await pc.setRemoteDescription(payload.description);
+      await flushPendingIce(payload.fromId, pc);
+
       if (payload.description.type === 'offer') {
         const answer = await pc.createAnswer();
         await pc.setLocalDescription(answer);
-        socket.emit('voice:signal', { targetId: payload.fromId, description: pc.localDescription });
+        socket.emit('voice:signal', {
+          targetId: payload.fromId,
+          description: pc.localDescription
+        });
       }
-    } else if (payload.candidate) {
-      await pc.addIceCandidate(payload.candidate);
+      return;
+    }
+
+    if (payload.candidate) {
+      if (pc.remoteDescription) {
+        await pc.addIceCandidate(payload.candidate);
+      } else {
+        if (!pendingIceCandidates.has(payload.fromId)) {
+          pendingIceCandidates.set(payload.fromId, []);
+        }
+        pendingIceCandidates.get(payload.fromId).push(payload.candidate);
+      }
     }
   } catch (error) {
     console.warn('Voice signaling error', error);
@@ -1755,50 +2043,112 @@ const mapCtx = map.getContext('2d');
 
 function drawMinimap() {
   if (!joined || !me) return;
+
   const w = map.width;
   const h = map.height;
-  const scale = 1.15;
+  const scale = 1.32;
   const worldToMap = (x, z) => ({
     x: w / 2 + (x - me.position.x) * scale,
     y: h / 2 + (z - me.position.z) * scale
   });
 
+  const drawHouseIcon = (x, y, size, selected = false) => {
+    if (x < -size || x > w + size || y < -size || y > h + size) return;
+    mapCtx.save();
+    mapCtx.translate(x, y);
+    mapCtx.fillStyle = selected ? '#ffffff' : '#f1d6b7';
+    mapCtx.strokeStyle = selected ? '#7c3aed' : '#8f684f';
+    mapCtx.lineWidth = selected ? 2.2 : 1.2;
+    mapCtx.beginPath();
+    mapCtx.rect(-size * .48, -size * .05, size * .96, size * .62);
+    mapCtx.fill();
+    mapCtx.stroke();
+    mapCtx.fillStyle = selected ? '#8b5cf6' : '#9b5f50';
+    mapCtx.beginPath();
+    mapCtx.moveTo(-size * .62, -size * .05);
+    mapCtx.lineTo(0, -size * .62);
+    mapCtx.lineTo(size * .62, -size * .05);
+    mapCtx.closePath();
+    mapCtx.fill();
+    mapCtx.fillStyle = '#6f4b3a';
+    mapCtx.fillRect(-size * .1, size * .23, size * .2, size * .34);
+    mapCtx.restore();
+  };
+
+  const drawTreeIcon = (x, y, size = 4) => {
+    if (x < -8 || x > w + 8 || y < -8 || y > h + 8) return;
+    mapCtx.fillStyle = '#72543d';
+    mapCtx.fillRect(x - 1, y + 1, 2, size + 2);
+    mapCtx.fillStyle = '#4f8a55';
+    mapCtx.beginPath();
+    mapCtx.arc(x, y, size, 0, Math.PI * 2);
+    mapCtx.fill();
+    mapCtx.fillStyle = '#6aa260';
+    mapCtx.beginPath();
+    mapCtx.arc(x - size * .35, y - size * .25, size * .48, 0, Math.PI * 2);
+    mapCtx.fill();
+  };
+
   mapCtx.clearRect(0, 0, w, h);
-  mapCtx.fillStyle = '#243348';
+  mapCtx.fillStyle = '#789b6f';
   mapCtx.fillRect(0, 0, w, h);
 
   const centerChunkX = Math.round(me.position.x / CHUNK_SIZE);
   const centerChunkZ = Math.round(me.position.z / CHUNK_SIZE);
-  mapCtx.strokeStyle = '#626c77';
-  mapCtx.lineWidth = 10;
 
+  // Sidewalk underlay, then asphalt road, then center stripes.
+  mapCtx.lineCap = 'butt';
   for (let cx = centerChunkX - 2; cx <= centerChunkX + 2; cx += 1) {
     for (let cz = centerChunkZ - 2; cz <= centerChunkZ + 2; cz += 1) {
       const ox = cx * CHUNK_SIZE;
       const oz = cz * CHUNK_SIZE;
+
       const v1 = worldToMap(ox, oz - CHUNK_SIZE / 2);
       const v2 = worldToMap(ox, oz + CHUNK_SIZE / 2);
-      mapCtx.beginPath(); mapCtx.moveTo(v1.x, v1.y); mapCtx.lineTo(v2.x, v2.y); mapCtx.stroke();
       const h1 = worldToMap(ox - CHUNK_SIZE / 2, oz);
       const h2 = worldToMap(ox + CHUNK_SIZE / 2, oz);
+
+      mapCtx.strokeStyle = '#d6d1c8';
+      mapCtx.lineWidth = 18;
+      mapCtx.beginPath(); mapCtx.moveTo(v1.x, v1.y); mapCtx.lineTo(v2.x, v2.y); mapCtx.stroke();
       mapCtx.beginPath(); mapCtx.moveTo(h1.x, h1.y); mapCtx.lineTo(h2.x, h2.y); mapCtx.stroke();
+
+      mapCtx.strokeStyle = '#515966';
+      mapCtx.lineWidth = 13;
+      mapCtx.beginPath(); mapCtx.moveTo(v1.x, v1.y); mapCtx.lineTo(v2.x, v2.y); mapCtx.stroke();
+      mapCtx.beginPath(); mapCtx.moveTo(h1.x, h1.y); mapCtx.lineTo(h2.x, h2.y); mapCtx.stroke();
+
+      mapCtx.strokeStyle = '#e9d58a';
+      mapCtx.lineWidth = 1.2;
+      mapCtx.setLineDash([6, 7]);
+      mapCtx.beginPath(); mapCtx.moveTo(v1.x, v1.y); mapCtx.lineTo(v2.x, v2.y); mapCtx.stroke();
+      mapCtx.beginPath(); mapCtx.moveTo(h1.x, h1.y); mapCtx.lineTo(h2.x, h2.y); mapCtx.stroke();
+      mapCtx.setLineDash([]);
     }
   }
 
-  mapCtx.fillStyle = '#8aad76';
-  proceduralHouses.forEach((house) => {
-    const p = worldToMap(house.x, house.z);
-    if (p.x > -8 && p.x < w + 8 && p.y > -8 && p.y < h + 8) {
-      mapCtx.fillRect(p.x - 3, p.y - 3, 6, 6);
-    }
+  proceduralTrees.forEach((tree) => {
+    const p = worldToMap(tree.x, tree.z);
+    drawTreeIcon(p.x, p.y, 3.1 + tree.scale);
   });
 
-  homePositions.forEach((p, index) => {
-    const m = worldToMap(p[0], p[1]);
-    if (m.x > -10 && m.x < w + 10 && m.y > -10 && m.y < h + 10) {
-      mapCtx.fillStyle = socialState && index === socialState.self.residenceHomeId ? '#ffffff' : '#9fc08c';
-      mapCtx.fillRect(m.x - 4, m.y - 4, 8, 8);
-    }
+  centralTreePositions.forEach((tree) => {
+    const p = worldToMap(tree[0], tree[1]);
+    drawTreeIcon(p.x, p.y, 4);
+  });
+
+  proceduralHouses.forEach((house) => {
+    const p = worldToMap(house.x, house.z);
+    drawHouseIcon(p.x, p.y, 8, false);
+  });
+
+  homePositions.forEach((home, index) => {
+    const p = worldToMap(home[0], home[1]);
+    const selected = Boolean(
+      socialState &&
+      (index === socialState.self.residenceHomeId || index === socialState.self.homeId)
+    );
+    drawHouseIcon(p.x, p.y, selected ? 11 : 9, selected);
   });
 
   remotePlayers.forEach((remote) => {
@@ -1807,22 +2157,43 @@ function drawMinimap() {
       const outfit = OUTFITS[remote.data.outfit] || OUTFITS.sky;
       mapCtx.beginPath();
       mapCtx.fillStyle = outfit.top;
-      mapCtx.arc(p.x, p.y, 4, 0, Math.PI * 2);
+      mapCtx.strokeStyle = '#ffffff';
+      mapCtx.lineWidth = 1.5;
+      mapCtx.arc(p.x, p.y, 4.5, 0, Math.PI * 2);
       mapCtx.fill();
+      mapCtx.stroke();
     }
   });
 
+  // Local player stays centered and points in the facing direction.
   mapCtx.save();
   mapCtx.translate(w / 2, h / 2);
   mapCtx.rotate(-me.rotation.y);
   mapCtx.fillStyle = '#ffffff';
+  mapCtx.strokeStyle = '#4f46e5';
+  mapCtx.lineWidth = 2;
   mapCtx.beginPath();
-  mapCtx.moveTo(0, -8);
-  mapCtx.lineTo(6, 7);
-  mapCtx.lineTo(-6, 7);
+  mapCtx.moveTo(0, -10);
+  mapCtx.lineTo(7, 7);
+  mapCtx.lineTo(0, 4);
+  mapCtx.lineTo(-7, 7);
   mapCtx.closePath();
   mapCtx.fill();
+  mapCtx.stroke();
   mapCtx.restore();
+
+  mapCtx.fillStyle = 'rgba(15,23,42,.72)';
+  mapCtx.beginPath();
+  mapCtx.arc(w - 22, 22, 14, 0, Math.PI * 2);
+  mapCtx.fill();
+  mapCtx.fillStyle = '#ffffff';
+  mapCtx.font = '800 12px system-ui';
+  mapCtx.textAlign = 'center';
+  mapCtx.textBaseline = 'middle';
+  mapCtx.fillText('N', w - 22, 22);
+
+  const coords = document.querySelector('#map-coords');
+  if (coords) coords.textContent = Math.round(me.position.x) + ', ' + Math.round(me.position.z);
 }
 
 const joystickEl = document.querySelector('#joystick');
@@ -1896,12 +2267,32 @@ document.querySelector('#mobile-e').addEventListener('click', () => {
 function updatePrompt() {
   const prompt = document.querySelector('#prompt');
   const nearest = nearestHouse();
-  if (nearest) {
-    prompt.classList.add('show');
-    document.querySelector('#prompt-text').textContent = nearest.permanent ? 'Visit Home #' + (nearest.homeId + 1) : 'Explore this home';
-  } else {
+
+  if (!nearest) {
     prompt.classList.remove('show');
+    return;
   }
+
+  let title = 'Neighborhood House';
+  let kicker = 'NEARBY HOME';
+
+  if (nearest.permanent) {
+    title = 'Home #' + (nearest.homeId + 1);
+    if (socialState && nearest.homeId === socialState.self.residenceHomeId) {
+      kicker = 'YOUR RESIDENCE';
+      title = 'Welcome Home';
+    } else if (socialState && nearest.homeId === socialState.self.homeId) {
+      kicker = 'YOUR ASSIGNED HOME';
+    }
+  } else {
+    kicker = 'EXPLORE';
+  }
+
+  document.querySelector('#house-kicker').textContent = kicker;
+  document.querySelector('#prompt-text').textContent = title;
+  document.querySelector('#house-distance').textContent =
+    Math.max(1, Math.round(nearest.distance)) + 'm away · Press E';
+  prompt.classList.add('show');
 }
 
 let previous = performance.now();
