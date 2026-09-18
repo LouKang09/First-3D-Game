@@ -898,39 +898,39 @@ function createAvatar(data, local = false) {
 
   [-.29, .29].forEach((x) => {
     const eyeWhite = new THREE.Mesh(new THREE.CircleGeometry(.155, 22), white);
-    eyeWhite.position.set(x, .035, .704);
+    eyeWhite.position.set(x, .035, .665);
     eyeWhite.scale.set(1, .72, 1);
     faceRig.add(eyeWhite);
 
     const iris = new THREE.Mesh(new THREE.CircleGeometry(.09, 20), eyeTint);
-    iris.position.set(x, .025, .711);
+    iris.position.set(x, .025, .671);
     iris.scale.set(.92, 1.08, 1);
     faceRig.add(iris);
 
     const pupil = new THREE.Mesh(new THREE.CircleGeometry(.042, 16), eyeDark);
-    pupil.position.set(x, .025, .716);
+    pupil.position.set(x, .025, .676);
     faceRig.add(pupil);
 
     const shine = new THREE.Mesh(new THREE.CircleGeometry(.018, 12), new THREE.MeshBasicMaterial({ color: 0xffffff }));
-    shine.position.set(x - .025, .075, .721);
+    shine.position.set(x - .025, .075, .678);
     faceRig.add(shine);
 
     const lash = new THREE.Mesh(new THREE.BoxGeometry(.245, .026, .012), eyeDark);
-    lash.position.set(x, .155, .7);
+    lash.position.set(x, .155, .647);
     lash.rotation.z = x < 0 ? -.08 : .08;
     faceRig.add(lash);
   });
 
   // Nose is intentionally low-relief instead of a detached sphere.
   const nose = new THREE.Mesh(new THREE.SphereGeometry(.055, 10, 8), material(0xd59a79, .8));
-  nose.position.set(0, -.115, .69);
+  nose.position.set(0, -.115, .713);
   nose.scale.set(.6, .7, .22);
   faceRig.add(nose);
 
   const smileCurve = new THREE.QuadraticBezierCurve3(
-    new THREE.Vector3(-.115, -.29, .694),
-    new THREE.Vector3(0, -.37, .704),
-    new THREE.Vector3(.115, -.29, .694)
+    new THREE.Vector3(-.115, -.29, .655),
+    new THREE.Vector3(0, -.37, .625),
+    new THREE.Vector3(.115, -.29, .655)
   );
   const mouth = new THREE.Line(
     new THREE.BufferGeometry().setFromPoints(smileCurve.getPoints(14)),
@@ -944,7 +944,7 @@ function createAvatar(data, local = false) {
         new THREE.CircleGeometry(.07, 16),
         new THREE.MeshBasicMaterial({ color: 0xe69b9c, transparent: true, opacity: .24 })
       );
-      blush.position.set(x, -.18, .682);
+      blush.position.set(x, -.18, .555);
       blush.scale.set(1.6, .5, 1);
       faceRig.add(blush);
     });
@@ -1149,7 +1149,7 @@ function createAvatar(data, local = false) {
 
   const name = makeTextSprite(data.name || 'Player', '#ffffff', local ? 'rgba(79,70,229,.9)' : 'rgba(17,24,39,.82)');
   name.position.y = 5.72;
-  name.scale.set(3.7, .92, 1);
+  name.scale.set(2.85, .7, 1);
   root.add(name);
 
   root.position.set(data.x || 0, data.y || 0, data.z || 0);
