@@ -1980,6 +1980,7 @@ async function flushPendingIce(peerId, pc) {
 
 function maybeStartVoiceConnection(peerId) {
   if (
+    voiceRelayActive ||
     !voiceEnabled ||
     !voiceReadyPeers.has(peerId) ||
     !isPartyMember(peerId)
@@ -2043,6 +2044,7 @@ socket.on('voice:ready:ack', ({ fromId } = {}) => {
 });
 
 socket.on('voice:signal', async (payload) => {
+  if (voiceRelayActive) return;
   if (!voiceEnabled || !socialState || !socialState.party) return;
   if (!socialState.party.members.some((member) => member.id === payload.fromId)) return;
 
