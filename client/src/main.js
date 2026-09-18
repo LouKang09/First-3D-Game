@@ -1466,7 +1466,7 @@ function carRoadBlocked(car, direction = car.direction) {
     const distance = Math.hypot(dx, dz);
 
     // Close cars at intersections get priority spacing regardless of axis.
-    if (distance < 5.8) {
+    if (distance < 8.2) {
       const forwardX = car.axis === 'x' ? direction : 0;
       const forwardZ = car.axis === 'z' ? direction : 0;
       const dot = dx * forwardX + dz * forwardZ;
@@ -1474,7 +1474,7 @@ function carRoadBlocked(car, direction = car.direction) {
     }
 
     if (car.axis === other.axis) {
-      return pointAheadOfCar(car, other.mesh.position, 11.5, 3.3, direction);
+      return pointAheadOfCar(car, other.mesh.position, 13.5, 3.5, direction);
     }
 
     return false;
@@ -1569,6 +1569,8 @@ function setMusicEnabled(enabled) {
   if (button) button.classList.toggle('active', musicEnabled);
 
   if (musicEnabled) {
+    const ctx = ensureGameAudio();
+    if (ctx && musicMaster) musicMaster.gain.setTargetAtTime(.026, ctx.currentTime, .12);
     startAmbientMusic();
   } else {
     if (musicInterval) window.clearInterval(musicInterval);
